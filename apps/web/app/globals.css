@@ -1,0 +1,85 @@
+html {
+  font-family: Arial, Helvetica, sans-serif;
+  background: #f4f7fb;
+  color: #122033;
+}
+
+body {
+  margin: 0;
+}
+
+a {
+  color: inherit;
+}
+
+.shell {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 48px 24px 64px;
+}
+
+.card {
+  background: #ffffff;
+  border: 1px solid #d9e2ef;
+  border-radius: 16px;
+  padding: 24px;
+  box-shadow: 0 12px 30px rgba(18, 32, 51, 0.06);
+}
+
+.stack {
+  display: grid;
+  gap: 16px;
+}
+
+.workspace-list {
+  display: grid;
+  gap: 12px;
+  padding: 0;
+  list-style: none;
+}
+
+.workspace-item {
+  border: 1px solid #d9e2ef;
+  border-radius: 12px;
+  padding: 16px;
+}
+
+.pill {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #345;
+  background: #edf3ff;
+  border-radius: 999px;
+  padding: 4px 10px;
+}
+
+.actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  border: 1px solid #1d4ed8;
+  background: #1d4ed8;
+  color: #ffffff;
+  font-weight: 600;
+  padding: 10px 14px;
+  text-decoration: none;
+}
+
+.button.secondary {
+  background: #ffffff;
+  color: #1d4ed8;
+}
+
+.muted {
+  color: #5b6b81;
+}
