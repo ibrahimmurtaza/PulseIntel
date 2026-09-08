@@ -31,7 +31,8 @@ export default async function TenantHomePage({ params }: TenantHomePageProps) {
           <span className="pill">Tenant Home</span>
           <h1>{tenantHome.tenant.name}</h1>
           <p className="muted">
-            Signed in as {session.name}. Only workspaces available through your
+            Signed in as {session.name}. Your tenant role is{" "}
+            {tenantHome.tenantRole}. Only workspaces available through your
             memberships are listed here.
           </p>
         </div>
@@ -47,6 +48,15 @@ export default async function TenantHomePage({ params }: TenantHomePageProps) {
           ))}
         </ul>
         <div className="actions">
+          {(tenantHome.tenantRole === "admin" ||
+            tenantHome.tenantRole === "owner") && (
+            <Link
+              className="button"
+              href={`/tenant/${tenantSlug}/invitations`}
+            >
+              Manage invitations
+            </Link>
+          )}
           <Link className="button secondary" href="/auth/logout">
             Sign out
           </Link>

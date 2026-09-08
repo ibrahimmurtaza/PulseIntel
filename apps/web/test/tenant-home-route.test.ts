@@ -1,8 +1,9 @@
 import { NextRequest } from "next/server";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import { GET } from "@/app/api/tenant-home/[tenantSlug]/route";
 import { createSessionValue } from "@/lib/session";
+import { resetDemoTenantState } from "@/lib/tenant-home";
 
 function createRequest(cookieValue?: string) {
   const headers = new Headers();
@@ -17,6 +18,10 @@ function createRequest(cookieValue?: string) {
 }
 
 describe("GET /api/tenant-home/[tenantSlug]", () => {
+  beforeEach(() => {
+    resetDemoTenantState();
+  });
+
   it("rejects unauthenticated requests", async () => {
     const response = await GET(createRequest(), {
       params: Promise.resolve({ tenantSlug: "acme" }),
