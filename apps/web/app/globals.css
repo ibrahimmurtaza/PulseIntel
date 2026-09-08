@@ -31,6 +31,31 @@ a {
   gap: 16px;
 }
 
+.field-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.field {
+  display: grid;
+  gap: 8px;
+}
+
+.field span {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.field input,
+.field select {
+  border: 1px solid #c3d2e6;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font: inherit;
+  background: #ffffff;
+}
+
 .workspace-list {
   display: grid;
   gap: 12px;
@@ -78,6 +103,26 @@ a {
 .button.secondary {
   background: #ffffff;
   color: #1d4ed8;
+}
+
+.notice {
+  border: 1px solid #bfd4ff;
+  background: #eef5ff;
+  color: #173b72;
+  border-radius: 12px;
+  padding: 12px 14px;
+}
+
+.notice.error {
+  border-color: #f1c2c2;
+  background: #fff1f1;
+  color: #7a1f1f;
+}
+
+.button,
+button.button {
+  cursor: pointer;
+  font: inherit;
 }
 
 .muted {
