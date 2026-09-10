@@ -78,6 +78,20 @@ export type InvitationView = {
   acceptPath: string;
 };
 
+export type WorkspaceView = {
+  id: string;
+  tenantSlug: string;
+  name: string;
+  description: string;
+  memberCount: number;
+  canManage: boolean;
+};
+
+export type WorkspaceDetailView = WorkspaceView & {
+  tenant: Tenant;
+  role: WorkspaceRole;
+};
+
 const initialUsers: User[] = [
   {
     id: "usr_anna",
@@ -153,6 +167,7 @@ const initialWorkspaceMemberships: WorkspaceMembership[] = [
 
 let nextUserId = 1;
 let nextInvitationId = 1;
+let nextWorkspaceId = 1;
 
 let users = cloneUsers(initialUsers);
 let tenantMemberships = cloneTenantMemberships(initialTenantMemberships);
@@ -189,6 +204,12 @@ function createInvitationId(): string {
   const value = nextInvitationId;
   nextInvitationId += 1;
   return `inv_${value}`;
+}
+
+function createWorkspaceId(): string {
+  const value = nextWorkspaceId;
+  nextWorkspaceId += 1;
+  return `ws_${value}`;
 }
 
 function normalizeEmail(email: string): string {
@@ -481,6 +502,7 @@ export function resetDemoTenantState() {
   invitations = [];
   nextUserId = 1;
   nextInvitationId = 1;
+  nextWorkspaceId = 1;
 }
 
 export function resolveTenantHome(
@@ -527,5 +549,185 @@ export function resolveTenantHome(
     tenant,
     tenantRole: tenantMembership.role,
     workspaces: accessibleWorkspaces,
+  };
+}
+
+export function getWorkspaceMembership(
+  tenantSlug: string,
+  workspaceId: string,
+  userId: string,
+): WorkspaceMembership | undefined {
+  const tenant = getTenantBySlug(tenantSlug);
+
+  if (!tenant) {
+    return undefined;
+  }
+
+  const workspace = getWorkspaceById(workspaceId);
+
+  if (!workspace || workspace.tenantId !== tenant.id) {
+    return undefined;
+  }
+
+  return workspaceMemberships.find(
+    (membership) =>
+      membership.workspaceId === workspaceId && membership.userId === userId,
+  );
+}
+
+export function canManageTenantWorkspaces(
+  tenantSlug: string,
+  userId: string,
+): boolean {
+  return canManageTenantInvitations(tenantSlug, userId);
+}
+
+export function listTenantWorkspacesForUser(
+  tenantSlug: string,
+  userId: string,
+): WorkspaceView[] {
+  const tenant = getTenantBySlug(tenantSlug);
+
+  if (!tenant) {
+    return [];
+  }
+
+  const tenantCanManage = canManageTenantWorkspaces(tenantSlug, userId);
+  const userTenantMembership = getTenantMembership(tenantSlug, userId);
+
+  if (!userTenantMembership) {
+    return [];
+  }
+
+  return workspaces
+    .filter((workspace) => workspace.tenantId === tenant.id)
+    .filter((workspace) => {
+      if (tenantCanManage) {
+        return true;
+      }
+
+      return workspaceMemberships.some(
+        (entry) =>
+          entry.workspaceId === workspace.id && entry.userId === userId,
+      );
+    })
+    .map((workspace) => {
+      const membership = workspaceMemberships.find(
+        (entry) =>
+          entry.workspaceId === workspace.id && entry.userId === userId,
+      );
+      const memberCount = workspaceMemberships.filter(
+        (entry) => entry.workspaceId === workspace.id,
+      ).length;
+
+      return {
+        id: workspace.id,
+        tenantSlug: tenant.slug,
+        name: workspace.name,
+        description: workspace.description,
+        memberCount,
+        canManage: tenantCanManage || membership?.role === "admin",
+      };
+    });
+}
+
+export function createWorkspace(input: {
+  tenantSlug: string;
+  createdByUserId: string;
+  name: string;
+  description?: string;
+}): WorkspaceView {
+  const tenant = getTenantBySlug(input.tenantSlug);
+
+  if (!tenant) {
+    throw new Error("tenant_not_found");
+  }
+
+  if (!canManageTenantWorkspaces(input.tenantSlug, input.createdByUserId)) {
+    throw new Error("forbidden");
+  }
+
+  const name = input.name.trim();
+
+  if (!name) {
+    throw new Error("name_required");
+  }
+
+  if (
+    workspaces.some(
+      (workspace) =>
+        workspace.tenantId === tenant.id &&
+        workspace.name.toLowerCase() === name.toLowerCase(),
+    )
+  ) {
+    throw new Error("workspace_already_exists");
+  }
+
+  const description = input.description?.trim() ?? "";
+
+  const workspace: Workspace = {
+    id: createWorkspaceId(),
+    tenantId: tenant.id,
+    name,
+    description,
+  };
+
+  workspaces.push(workspace);
+
+  workspaceMemberships.push({
+    workspaceId: workspace.id,
+    userId: input.createdByUserId,
+    role: "admin",
+  });
+
+  return {
+    id: workspace.id,
+    tenantSlug: tenant.slug,
+    name: workspace.name,
+    description: workspace.description,
+    memberCount: 1,
+    canManage: true,
+  };
+}
+
+export function resolveWorkspace(
+  tenantSlug: string,
+  workspaceId: string,
+  userId: string,
+): WorkspaceDetailView | null {
+  const tenant = getTenantBySlug(tenantSlug);
+
+  if (!tenant) {
+    return null;
+  }
+
+  const workspace = getWorkspaceById(workspaceId);
+
+  if (!workspace || workspace.tenantId !== tenant.id) {
+    return null;
+  }
+
+  const membership = workspaceMemberships.find(
+    (entry) =>
+      entry.workspaceId === workspaceId && entry.userId === userId,
+  );
+
+  if (!membership) {
+    return null;
+  }
+
+  const memberCount = workspaceMemberships.filter(
+    (entry) => entry.workspaceId === workspaceId,
+  ).length;
+
+  return {
+    id: workspace.id,
+    tenantSlug: tenant.slug,
+    name: workspace.name,
+    description: workspace.description,
+    memberCount,
+    canManage: membership.role === "admin",
+    tenant,
+    role: membership.role,
   };
 }
