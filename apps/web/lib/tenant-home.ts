@@ -92,6 +92,56 @@ export type WorkspaceDetailView = WorkspaceView & {
   role: WorkspaceRole;
 };
 
+export type WidgetKind = "chart" | "feed" | "metric" | "insight";
+
+export type DashboardTimeRange = {
+  label: string;
+  windowDays: number;
+};
+
+export type Widget = {
+  id: string;
+  dashboardId: string;
+  kind: WidgetKind;
+  title: string;
+  description: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  timeRangeOverride?: DashboardTimeRange;
+};
+
+export type Dashboard = {
+  id: string;
+  workspaceId: string;
+  name: string;
+  description: string;
+  defaultTimeRange: DashboardTimeRange;
+  createdByUserId: string;
+  createdAt: string;
+};
+
+export type WidgetView = Widget;
+
+export type DashboardView = {
+  id: string;
+  workspaceId: string;
+  tenantSlug: string;
+  name: string;
+  description: string;
+  defaultTimeRange: DashboardTimeRange;
+  widgetCount: number;
+  canManage: boolean;
+  createdAt: string;
+};
+
+export type DashboardDetailView = DashboardView & {
+  tenant: Tenant;
+  role: WorkspaceRole;
+  widgets: WidgetView[];
+};
+
 const initialUsers: User[] = [
   {
     id: "usr_anna",
@@ -168,11 +218,15 @@ const initialWorkspaceMemberships: WorkspaceMembership[] = [
 let nextUserId = 1;
 let nextInvitationId = 1;
 let nextWorkspaceId = 1;
+let nextDashboardId = 1;
+let nextWidgetId = 1;
 
 let users = cloneUsers(initialUsers);
 let tenantMemberships = cloneTenantMemberships(initialTenantMemberships);
 let workspaceMemberships = cloneWorkspaceMemberships(initialWorkspaceMemberships);
 let invitations: Invitation[] = [];
+let dashboards: Dashboard[] = [];
+let widgets: Widget[] = [];
 
 function cloneUsers(entries: User[]): User[] {
   return entries.map((entry) => ({ ...entry }));
@@ -194,6 +248,22 @@ function cloneInvitation(entry: Invitation): Invitation {
   return { ...entry };
 }
 
+function cloneDashboard(entry: Dashboard): Dashboard {
+  return {
+    ...entry,
+    defaultTimeRange: { ...entry.defaultTimeRange },
+  };
+}
+
+function cloneWidget(entry: Widget): Widget {
+  return {
+    ...entry,
+    timeRangeOverride: entry.timeRangeOverride
+      ? { ...entry.timeRangeOverride }
+      : undefined,
+  };
+}
+
 function createUserId(): string {
   const value = nextUserId;
   nextUserId += 1;
@@ -212,6 +282,18 @@ function createWorkspaceId(): string {
   return `ws_${value}`;
 }
 
+function createDashboardId(): string {
+  const value = nextDashboardId;
+  nextDashboardId += 1;
+  return `dash_${value}`;
+}
+
+function createWidgetId(): string {
+  const value = nextWidgetId;
+  nextWidgetId += 1;
+  return `wgt_${value}`;
+}
+
 function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
 }
@@ -226,6 +308,14 @@ function getWorkspaceById(workspaceId: string): Workspace | undefined {
 
 function getInvitationRecord(invitationId: string): Invitation | undefined {
   return invitations.find((invitation) => invitation.id === invitationId);
+}
+
+function getDashboardRecord(dashboardId: string): Dashboard | undefined {
+  return dashboards.find((dashboard) => dashboard.id === dashboardId);
+}
+
+function getWidgetRecord(widgetId: string): Widget | undefined {
+  return widgets.find((widget) => widget.id === widgetId);
 }
 
 function invitationToView(invitation: Invitation): InvitationView {
@@ -500,9 +590,13 @@ export function resetDemoTenantState() {
   tenantMemberships = cloneTenantMemberships(initialTenantMemberships);
   workspaceMemberships = cloneWorkspaceMemberships(initialWorkspaceMemberships);
   invitations = [];
+  dashboards = [];
+  widgets = [];
   nextUserId = 1;
   nextInvitationId = 1;
   nextWorkspaceId = 1;
+  nextDashboardId = 1;
+  nextWidgetId = 1;
 }
 
 export function resolveTenantHome(
@@ -730,4 +824,336 @@ export function resolveWorkspace(
     tenant,
     role: membership.role,
   };
+}
+
+function normalizeTimeRangeLabel(label: string): string {
+  return label.trim();
+}
+
+function isWidgetKind(value: unknown): value is WidgetKind {
+  return (
+    value === "chart" ||
+    value === "feed" ||
+    value === "metric" ||
+    value === "insight"
+  );
+}
+
+function parseTimeRangeInput(value: unknown): DashboardTimeRange | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  const candidate = value as {
+    label?: unknown;
+    windowDays?: unknown;
+  };
+
+  if (
+    typeof candidate.label !== "string" ||
+    typeof candidate.windowDays !== "number" ||
+    !Number.isFinite(candidate.windowDays) ||
+    candidate.windowDays <= 0
+  ) {
+    return undefined;
+  }
+
+  const label = normalizeTimeRangeLabel(candidate.label);
+
+  if (!label) {
+    return undefined;
+  }
+
+  return { label, windowDays: Math.floor(candidate.windowDays) };
+}
+
+export function canManageWorkspaceDashboards(
+  tenantSlug: string,
+  workspaceId: string,
+  userId: string,
+): boolean {
+  const membership = getWorkspaceMembership(tenantSlug, workspaceId, userId);
+  return membership?.role === "admin" || membership?.role === "editor";
+}
+
+export function listWorkspaceDashboards(
+  tenantSlug: string,
+  workspaceId: string,
+  userId: string,
+): DashboardView[] {
+  const tenant = getTenantBySlug(tenantSlug);
+
+  if (!tenant) {
+    return [];
+  }
+
+  const workspace = getWorkspaceById(workspaceId);
+
+  if (!workspace || workspace.tenantId !== tenant.id) {
+    return [];
+  }
+
+  const membership = workspaceMemberships.find(
+    (entry) =>
+      entry.workspaceId === workspaceId && entry.userId === userId,
+  );
+
+  if (!membership) {
+    return [];
+  }
+
+  const canManage = membership.role === "admin" || membership.role === "editor";
+
+  return dashboards
+    .filter((dashboard) => dashboard.workspaceId === workspaceId)
+    .map((dashboard) => ({
+      id: dashboard.id,
+      workspaceId: dashboard.workspaceId,
+      tenantSlug: tenant.slug,
+      name: dashboard.name,
+      description: dashboard.description,
+      defaultTimeRange: { ...dashboard.defaultTimeRange },
+      widgetCount: widgets.filter((widget) => widget.dashboardId === dashboard.id)
+        .length,
+      canManage,
+      createdAt: dashboard.createdAt,
+    }));
+}
+
+export function createDashboard(input: {
+  tenantSlug: string;
+  workspaceId: string;
+  createdByUserId: string;
+  name: string;
+  description?: string;
+  defaultTimeRange: DashboardTimeRange;
+}): DashboardView {
+  const tenant = getTenantBySlug(input.tenantSlug);
+
+  if (!tenant) {
+    throw new Error("tenant_not_found");
+  }
+
+  const workspace = getWorkspaceById(input.workspaceId);
+
+  if (!workspace || workspace.tenantId !== tenant.id) {
+    throw new Error("workspace_not_found");
+  }
+
+  if (
+    !canManageWorkspaceDashboards(
+      input.tenantSlug,
+      input.workspaceId,
+      input.createdByUserId,
+    )
+  ) {
+    throw new Error("forbidden");
+  }
+
+  const name = input.name.trim();
+
+  if (!name) {
+    throw new Error("name_required");
+  }
+
+  if (
+    dashboards.some(
+      (dashboard) =>
+        dashboard.workspaceId === input.workspaceId &&
+        dashboard.name.toLowerCase() === name.toLowerCase(),
+    )
+  ) {
+    throw new Error("dashboard_already_exists");
+  }
+
+  const timeRange = parseTimeRangeInput(input.defaultTimeRange);
+
+  if (!timeRange) {
+    throw new Error("time_range_required");
+  }
+
+  const description = input.description?.trim() ?? "";
+
+  const dashboard: Dashboard = {
+    id: createDashboardId(),
+    workspaceId: input.workspaceId,
+    name,
+    description,
+    defaultTimeRange: timeRange,
+    createdByUserId: input.createdByUserId,
+    createdAt: new Date().toISOString(),
+  };
+
+  dashboards.unshift(dashboard);
+
+  return {
+    id: dashboard.id,
+    workspaceId: dashboard.workspaceId,
+    tenantSlug: tenant.slug,
+    name: dashboard.name,
+    description: dashboard.description,
+    defaultTimeRange: { ...dashboard.defaultTimeRange },
+    widgetCount: 0,
+    canManage: true,
+    createdAt: dashboard.createdAt,
+  };
+}
+
+export function resolveDashboard(
+  tenantSlug: string,
+  workspaceId: string,
+  dashboardId: string,
+  userId: string,
+): DashboardDetailView | null {
+  const tenant = getTenantBySlug(tenantSlug);
+
+  if (!tenant) {
+    return null;
+  }
+
+  const workspace = getWorkspaceById(workspaceId);
+
+  if (!workspace || workspace.tenantId !== tenant.id) {
+    return null;
+  }
+
+  const dashboard = getDashboardRecord(dashboardId);
+
+  if (!dashboard || dashboard.workspaceId !== workspace.id) {
+    return null;
+  }
+
+  const membership = workspaceMemberships.find(
+    (entry) =>
+      entry.workspaceId === workspaceId && entry.userId === userId,
+  );
+
+  if (!membership) {
+    return null;
+  }
+
+  const canManage = membership.role === "admin" || membership.role === "editor";
+  const dashboardWidgets = widgets
+    .filter((widget) => widget.dashboardId === dashboard.id)
+    .map((widget) => ({
+      ...widget,
+      timeRangeOverride: widget.timeRangeOverride
+        ? { ...widget.timeRangeOverride }
+        : undefined,
+    }));
+
+  return {
+    id: dashboard.id,
+    workspaceId: dashboard.workspaceId,
+    tenantSlug: tenant.slug,
+    name: dashboard.name,
+    description: dashboard.description,
+    defaultTimeRange: { ...dashboard.defaultTimeRange },
+    widgetCount: dashboardWidgets.length,
+    canManage,
+    createdAt: dashboard.createdAt,
+    tenant,
+    role: membership.role,
+    widgets: dashboardWidgets,
+  };
+}
+
+export function addDashboardWidget(input: {
+  tenantSlug: string;
+  workspaceId: string;
+  dashboardId: string;
+  createdByUserId: string;
+  kind: WidgetKind;
+  title: string;
+  description?: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  timeRangeOverride?: DashboardTimeRange;
+}): WidgetView {
+  const tenant = getTenantBySlug(input.tenantSlug);
+
+  if (!tenant) {
+    throw new Error("tenant_not_found");
+  }
+
+  const workspace = getWorkspaceById(input.workspaceId);
+
+  if (!workspace || workspace.tenantId !== tenant.id) {
+    throw new Error("workspace_not_found");
+  }
+
+  const dashboard = getDashboardRecord(input.dashboardId);
+
+  if (!dashboard || dashboard.workspaceId !== workspace.id) {
+    throw new Error("dashboard_not_found");
+  }
+
+  if (
+    !canManageWorkspaceDashboards(
+      input.tenantSlug,
+      input.workspaceId,
+      input.createdByUserId,
+    )
+  ) {
+    throw new Error("forbidden");
+  }
+
+  if (!isWidgetKind(input.kind)) {
+    throw new Error("widget_kind_required");
+  }
+
+  const title = input.title.trim();
+
+  if (!title) {
+    throw new Error("title_required");
+  }
+
+  if (
+    !Number.isFinite(input.x) ||
+    !Number.isFinite(input.y) ||
+    !Number.isFinite(input.width) ||
+    !Number.isFinite(input.height) ||
+    input.width <= 0 ||
+    input.height <= 0
+  ) {
+    throw new Error("widget_layout_required");
+  }
+
+  const timeRangeOverride = input.timeRangeOverride
+    ? parseTimeRangeInput(input.timeRangeOverride)
+    : undefined;
+
+  if (input.timeRangeOverride && !timeRangeOverride) {
+    throw new Error("time_range_required");
+  }
+
+  const widget: Widget = {
+    id: createWidgetId(),
+    dashboardId: dashboard.id,
+    kind: input.kind,
+    title,
+    description: input.description?.trim() ?? "",
+    x: Math.floor(input.x),
+    y: Math.floor(input.y),
+    width: Math.floor(input.width),
+    height: Math.floor(input.height),
+    timeRangeOverride: timeRangeOverride
+      ? { ...timeRangeOverride }
+      : undefined,
+  };
+
+  widgets.push(widget);
+
+  return {
+    ...widget,
+    timeRangeOverride: widget.timeRangeOverride
+      ? { ...widget.timeRangeOverride }
+      : undefined,
+  };
+}
+
+export function parseWidgetKindInput(value: unknown): WidgetKind | undefined {
+  return isWidgetKind(value) ? value : undefined;
 }
