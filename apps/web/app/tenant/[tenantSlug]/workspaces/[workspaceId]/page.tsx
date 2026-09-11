@@ -48,6 +48,22 @@ export default async function WorkspaceDetailPage({
           <p className="muted">Members in this workspace: {workspace.memberCount}</p>
         </div>
 
+        <div className="stack">
+          <h2>Dashboards</h2>
+          <p className="muted">
+            Open the dashboards list to view and create saved intelligence
+            surfaces in this workspace.
+          </p>
+          <div className="actions">
+            <Link
+              className="button secondary"
+              href={`/tenant/${tenantSlug}/workspaces/${workspace.id}/dashboards`}
+            >
+              Manage dashboards
+            </Link>
+          </div>
+        </div>
+
         <div className="actions">
           <Link className="button secondary" href={`/tenant/${tenantSlug}/workspaces`}>
             Back to workspaces
