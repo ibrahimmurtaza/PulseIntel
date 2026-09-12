@@ -142,6 +142,34 @@ export type DashboardDetailView = DashboardView & {
   widgets: WidgetView[];
 };
 
+export type DashboardRevisionState = {
+  dashboard: Dashboard;
+  widgets: Widget[];
+};
+
+export type DashboardRevision = {
+  id: string;
+  dashboardId: string;
+  workspaceId: string;
+  isSnapshot: boolean;
+  label: string;
+  createdByUserId: string;
+  createdAt: string;
+  state: DashboardRevisionState;
+};
+
+export type DashboardRevisionView = {
+  id: string;
+  dashboardId: string;
+  workspaceId: string;
+  tenantSlug: string;
+  isSnapshot: boolean;
+  label: string;
+  createdBy: { id: string; name: string };
+  createdAt: string;
+  widgetCount: number;
+};
+
 const initialUsers: User[] = [
   {
     id: "usr_anna",
@@ -220,6 +248,7 @@ let nextInvitationId = 1;
 let nextWorkspaceId = 1;
 let nextDashboardId = 1;
 let nextWidgetId = 1;
+let nextRevisionId = 1;
 
 let users = cloneUsers(initialUsers);
 let tenantMemberships = cloneTenantMemberships(initialTenantMemberships);
@@ -227,6 +256,7 @@ let workspaceMemberships = cloneWorkspaceMemberships(initialWorkspaceMemberships
 let invitations: Invitation[] = [];
 let dashboards: Dashboard[] = [];
 let widgets: Widget[] = [];
+let revisions: DashboardRevision[] = [];
 
 function cloneUsers(entries: User[]): User[] {
   return entries.map((entry) => ({ ...entry }));
@@ -248,7 +278,7 @@ function cloneInvitation(entry: Invitation): Invitation {
   return { ...entry };
 }
 
-function cloneDashboard(entry: Dashboard): Dashboard {
+function cloneDashboardRecord(entry: Dashboard): Dashboard {
   return {
     ...entry,
     defaultTimeRange: { ...entry.defaultTimeRange },
@@ -294,6 +324,19 @@ function createWidgetId(): string {
   return `wgt_${value}`;
 }
 
+function createRevisionId(): string {
+  const value = nextRevisionId;
+  nextRevisionId += 1;
+  return `rev_${value}`;
+}
+
+function cloneRevisionState(state: DashboardRevisionState): DashboardRevisionState {
+  return {
+    dashboard: cloneDashboardRecord(state.dashboard),
+    widgets: state.widgets.map(cloneWidget),
+  };
+}
+
 function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
 }
@@ -316,6 +359,10 @@ function getDashboardRecord(dashboardId: string): Dashboard | undefined {
 
 function getWidgetRecord(widgetId: string): Widget | undefined {
   return widgets.find((widget) => widget.id === widgetId);
+}
+
+function getRevisionRecord(revisionId: string): DashboardRevision | undefined {
+  return revisions.find((revision) => revision.id === revisionId);
 }
 
 function invitationToView(invitation: Invitation): InvitationView {
@@ -592,11 +639,13 @@ export function resetDemoTenantState() {
   invitations = [];
   dashboards = [];
   widgets = [];
+  revisions = [];
   nextUserId = 1;
   nextInvitationId = 1;
   nextWorkspaceId = 1;
   nextDashboardId = 1;
   nextWidgetId = 1;
+  nextRevisionId = 1;
 }
 
 export function resolveTenantHome(
@@ -1146,6 +1195,14 @@ export function addDashboardWidget(input: {
 
   widgets.push(widget);
 
+  recordDashboardRevision({
+    dashboardId: dashboard.id,
+    workspaceId: workspace.id,
+    userId: input.createdByUserId,
+    isSnapshot: false,
+    label: `Auto-saved at ${new Date().toISOString()}`,
+  });
+
   return {
     ...widget,
     timeRangeOverride: widget.timeRangeOverride
@@ -1156,4 +1213,325 @@ export function addDashboardWidget(input: {
 
 export function parseWidgetKindInput(value: unknown): WidgetKind | undefined {
   return isWidgetKind(value) ? value : undefined;
+}
+
+function revisionToView(
+  revision: DashboardRevision,
+  tenantSlug: string,
+): DashboardRevisionView {
+  const user = getUserById(revision.createdByUserId);
+
+  return {
+    id: revision.id,
+    dashboardId: revision.dashboardId,
+    workspaceId: revision.workspaceId,
+    tenantSlug,
+    isSnapshot: revision.isSnapshot,
+    label: revision.label,
+    createdBy: {
+      id: revision.createdByUserId,
+      name: user?.name ?? "Unknown user",
+    },
+    createdAt: revision.createdAt,
+    widgetCount: revision.state.widgets.length,
+  };
+}
+
+function recordDashboardRevision(input: {
+  dashboardId: string;
+  workspaceId: string;
+  userId: string;
+  isSnapshot: boolean;
+  label: string;
+}): DashboardRevision {
+  const dashboard = getDashboardRecord(input.dashboardId);
+
+  if (!dashboard || dashboard.workspaceId !== input.workspaceId) {
+    throw new Error("dashboard_not_found");
+  }
+
+  const dashboardWidgets = widgets.filter(
+    (widget) => widget.dashboardId === dashboard.id,
+  );
+
+  const state: DashboardRevisionState = {
+    dashboard: cloneDashboardRecord(dashboard),
+    widgets: dashboardWidgets.map(cloneWidget),
+  };
+
+  const revision: DashboardRevision = {
+    id: createRevisionId(),
+    dashboardId: dashboard.id,
+    workspaceId: dashboard.workspaceId,
+    isSnapshot: input.isSnapshot,
+    label: input.label.trim() || `Revision at ${new Date().toISOString()}`,
+    createdByUserId: input.userId,
+    createdAt: new Date().toISOString(),
+    state,
+  };
+
+  revisions.unshift(revision);
+
+  return revision;
+}
+
+export function cloneDashboard(input: {
+  tenantSlug: string;
+  workspaceId: string;
+  sourceDashboardId: string;
+  createdByUserId: string;
+  name?: string;
+  description?: string;
+}): DashboardView {
+  const tenant = getTenantBySlug(input.tenantSlug);
+
+  if (!tenant) {
+    throw new Error("tenant_not_found");
+  }
+
+  const workspace = getWorkspaceById(input.workspaceId);
+
+  if (!workspace || workspace.tenantId !== tenant.id) {
+    throw new Error("workspace_not_found");
+  }
+
+  if (
+    !canManageWorkspaceDashboards(
+      input.tenantSlug,
+      input.workspaceId,
+      input.createdByUserId,
+    )
+  ) {
+    throw new Error("forbidden");
+  }
+
+  const source = getDashboardRecord(input.sourceDashboardId);
+
+  if (!source || source.workspaceId !== workspace.id) {
+    throw new Error("dashboard_not_found");
+  }
+
+  const requestedName = input.name?.trim() ?? `${source.name} (Copy)`;
+
+  if (!requestedName) {
+    throw new Error("name_required");
+  }
+
+  let name = requestedName;
+  let suffix = 2;
+
+  while (
+    dashboards.some(
+      (dashboard) =>
+        dashboard.workspaceId === workspace.id &&
+        dashboard.name.toLowerCase() === name.toLowerCase(),
+    )
+  ) {
+    name = `${requestedName} (${suffix})`;
+    suffix += 1;
+  }
+
+  const description = input.description?.trim() ?? source.description;
+
+  const dashboard: Dashboard = {
+    id: createDashboardId(),
+    workspaceId: workspace.id,
+    name,
+    description,
+    defaultTimeRange: { ...source.defaultTimeRange },
+    createdByUserId: input.createdByUserId,
+    createdAt: new Date().toISOString(),
+  };
+
+  dashboards.unshift(dashboard);
+
+  const sourceWidgets = widgets.filter(
+    (widget) => widget.dashboardId === source.id,
+  );
+
+  for (const widget of sourceWidgets) {
+    widgets.push({
+      ...cloneWidget(widget),
+      id: createWidgetId(),
+      dashboardId: dashboard.id,
+    });
+  }
+
+  recordDashboardRevision({
+    dashboardId: dashboard.id,
+    workspaceId: workspace.id,
+    userId: input.createdByUserId,
+    isSnapshot: false,
+    label: `Cloned from ${source.name}`,
+  });
+
+  return {
+    id: dashboard.id,
+    workspaceId: dashboard.workspaceId,
+    tenantSlug: tenant.slug,
+    name: dashboard.name,
+    description: dashboard.description,
+    defaultTimeRange: { ...dashboard.defaultTimeRange },
+    widgetCount: sourceWidgets.length,
+    canManage: true,
+    createdAt: dashboard.createdAt,
+  };
+}
+
+export function createDashboardSnapshot(input: {
+  tenantSlug: string;
+  workspaceId: string;
+  dashboardId: string;
+  createdByUserId: string;
+  name: string;
+}): DashboardRevisionView {
+  const tenant = getTenantBySlug(input.tenantSlug);
+
+  if (!tenant) {
+    throw new Error("tenant_not_found");
+  }
+
+  const workspace = getWorkspaceById(input.workspaceId);
+
+  if (!workspace || workspace.tenantId !== tenant.id) {
+    throw new Error("workspace_not_found");
+  }
+
+  const dashboard = getDashboardRecord(input.dashboardId);
+
+  if (!dashboard || dashboard.workspaceId !== workspace.id) {
+    throw new Error("dashboard_not_found");
+  }
+
+  if (
+    !canManageWorkspaceDashboards(
+      input.tenantSlug,
+      input.workspaceId,
+      input.createdByUserId,
+    )
+  ) {
+    throw new Error("forbidden");
+  }
+
+  const name = input.name.trim();
+
+  if (!name) {
+    throw new Error("snapshot_name_required");
+  }
+
+  const revision = recordDashboardRevision({
+    dashboardId: dashboard.id,
+    workspaceId: workspace.id,
+    userId: input.createdByUserId,
+    isSnapshot: true,
+    label: name,
+  });
+
+  return revisionToView(revision, tenant.slug);
+}
+
+export function listDashboardRevisions(input: {
+  tenantSlug: string;
+  workspaceId: string;
+  dashboardId: string;
+  userId: string;
+}): DashboardRevisionView[] | null {
+  const tenant = getTenantBySlug(input.tenantSlug);
+
+  if (!tenant) {
+    return null;
+  }
+
+  const workspace = getWorkspaceById(input.workspaceId);
+
+  if (!workspace || workspace.tenantId !== tenant.id) {
+    return null;
+  }
+
+  const dashboard = getDashboardRecord(input.dashboardId);
+
+  if (!dashboard || dashboard.workspaceId !== workspace.id) {
+    return null;
+  }
+
+  const membership = workspaceMemberships.find(
+    (entry) =>
+      entry.workspaceId === workspace.id && entry.userId === input.userId,
+  );
+
+  if (!membership) {
+    return null;
+  }
+
+  return revisions
+    .filter((revision) => revision.dashboardId === dashboard.id)
+    .map((revision) => revisionToView(revision, tenant.slug));
+}
+
+export function restoreDashboardRevision(input: {
+  tenantSlug: string;
+  workspaceId: string;
+  dashboardId: string;
+  revisionId: string;
+  userId: string;
+}): DashboardDetailView | null {
+  const tenant = getTenantBySlug(input.tenantSlug);
+
+  if (!tenant) {
+    return null;
+  }
+
+  const workspace = getWorkspaceById(input.workspaceId);
+
+  if (!workspace || workspace.tenantId !== tenant.id) {
+    return null;
+  }
+
+  const dashboard = getDashboardRecord(input.dashboardId);
+
+  if (!dashboard || dashboard.workspaceId !== workspace.id) {
+    return null;
+  }
+
+  const revision = getRevisionRecord(input.revisionId);
+
+  if (!revision || revision.dashboardId !== dashboard.id) {
+    throw new Error("revision_not_found");
+  }
+
+  if (
+    !canManageWorkspaceDashboards(
+      input.tenantSlug,
+      input.workspaceId,
+      input.userId,
+    )
+  ) {
+    throw new Error("forbidden");
+  }
+
+  const restoredState = cloneRevisionState(revision.state);
+
+  dashboard.name = restoredState.dashboard.name;
+  dashboard.description = restoredState.dashboard.description;
+  dashboard.defaultTimeRange = { ...restoredState.dashboard.defaultTimeRange };
+
+  widgets = widgets.filter((widget) => widget.dashboardId !== dashboard.id);
+  for (const widget of restoredState.widgets) {
+    widgets.push(cloneWidget(widget));
+  }
+
+  recordDashboardRevision({
+    dashboardId: dashboard.id,
+    workspaceId: workspace.id,
+    userId: input.userId,
+    isSnapshot: false,
+    label: `Restored from ${revision.label}`,
+  });
+
+  return resolveDashboard(
+    input.tenantSlug,
+    input.workspaceId,
+    dashboard.id,
+    input.userId,
+  );
 }

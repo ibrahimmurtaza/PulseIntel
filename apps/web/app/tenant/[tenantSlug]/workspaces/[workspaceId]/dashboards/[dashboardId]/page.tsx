@@ -2,7 +2,10 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { getSessionFromPage } from "@/lib/request-auth";
-import { resolveDashboard } from "@/lib/tenant-home";
+import {
+  listDashboardRevisions,
+  resolveDashboard,
+} from "@/lib/tenant-home";
 
 type DashboardDetailPageProps = {
   params: Promise<{
@@ -13,6 +16,8 @@ type DashboardDetailPageProps = {
   searchParams?: Promise<{
     created?: string;
     error?: string;
+    snapshot?: string;
+    restored?: string;
   }>;
 };
 
@@ -36,7 +41,11 @@ function describeError(error?: string) {
     case "dashboard_not_found":
       return "This dashboard could not be found in this workspace.";
     case "forbidden":
-      return "Only workspace editors and admins can add widgets.";
+      return "Only workspace editors and admins can modify dashboards.";
+    case "snapshot_name_required":
+      return "Snapshot name is required.";
+    case "revision_not_found":
+      return "That revision could not be found on this dashboard.";
     default:
       return undefined;
   }
@@ -70,6 +79,13 @@ export default async function DashboardDetailPage({
   }
 
   const errorMessage = describeError(query.error);
+  const revisions =
+    listDashboardRevisions({
+      tenantSlug,
+      workspaceId,
+      dashboardId,
+      userId: session.userId,
+    }) ?? [];
 
   return (
     <main className="shell">
@@ -97,6 +113,14 @@ export default async function DashboardDetailPage({
 
         {query.created ? (
           <p className="notice">Widget {query.created} was added.</p>
+        ) : null}
+        {query.snapshot ? (
+          <p className="notice">Snapshot {query.snapshot} was recorded.</p>
+        ) : null}
+        {query.restored ? (
+          <p className="notice">
+            Dashboard was restored from revision {query.restored}.
+          </p>
         ) : null}
         {errorMessage ? <p className="notice error">{errorMessage}</p> : null}
 
@@ -186,6 +210,39 @@ export default async function DashboardDetailPage({
           </form>
         ) : null}
 
+        {dashboard.canManage ? (
+          <form
+            action={`/tenant/${tenantSlug}/workspaces/${workspaceId}/dashboards/${dashboard.id}/clone`}
+            className="stack"
+            method="post"
+          >
+            <h2>Clone dashboard</h2>
+            <p className="muted">
+              Creates an independent copy with no live linkage to this
+              dashboard. Useful for spinning up variants or templates.
+            </p>
+            <div className="field-grid">
+              <label className="field">
+                <span>Clone name</span>
+                <input
+                  name="name"
+                  placeholder={`${dashboard.name} (Copy)`}
+                  type="text"
+                />
+              </label>
+              <label className="field">
+                <span>Description</span>
+                <input name="description" placeholder="Optional summary" />
+              </label>
+            </div>
+            <div className="actions">
+              <button className="button" type="submit">
+                Clone dashboard
+              </button>
+            </div>
+          </form>
+        ) : null}
+
         <div className="stack">
           <h2>Widgets</h2>
           {dashboard.widgets.length === 0 ? (
@@ -213,6 +270,71 @@ export default async function DashboardDetailPage({
                       ? `${widget.timeRangeOverride.label} - ${widget.timeRangeOverride.windowDays}d (override)`
                       : `${dashboard.defaultTimeRange.label} - ${dashboard.defaultTimeRange.windowDays}d (default)`}
                   </p>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <div className="stack">
+          <h2>History</h2>
+          <p className="muted">
+            Every save creates an auto-revision. Snapshot the dashboard to mark
+            a recoverable restore point you can come back to.
+          </p>
+
+          {dashboard.canManage ? (
+            <form
+              action={`/tenant/${tenantSlug}/workspaces/${workspaceId}/dashboards/${dashboard.id}/revisions`}
+              className="stack"
+              method="post"
+            >
+              <div className="field-grid">
+                <label className="field">
+                  <span>Snapshot name</span>
+                  <input
+                    name="name"
+                    placeholder="e.g. Pre-launch baseline"
+                    required
+                    type="text"
+                  />
+                </label>
+              </div>
+              <div className="actions">
+                <button className="button" type="submit">
+                  Snapshot now
+                </button>
+              </div>
+            </form>
+          ) : null}
+
+          {revisions.length === 0 ? (
+            <p className="muted">No revisions recorded yet.</p>
+          ) : (
+            <ul className="workspace-list">
+              {revisions.map((revision) => (
+                <li className="workspace-item stack" key={revision.id}>
+                  <div className="actions">
+                    <strong>{revision.label}</strong>
+                    <span className="pill">
+                      {revision.isSnapshot ? "Snapshot" : "Auto-save"}
+                    </span>
+                  </div>
+                  <p className="muted">
+                    {revision.widgetCount} widget
+                    {revision.widgetCount === 1 ? "" : "s"} - captured by{" "}
+                    {revision.createdBy.name} - {revision.createdAt}
+                  </p>
+                  {dashboard.canManage ? (
+                    <form
+                      action={`/tenant/${tenantSlug}/workspaces/${workspaceId}/dashboards/${dashboard.id}/revisions/${revision.id}/restore`}
+                      method="post"
+                    >
+                      <button className="button secondary" type="submit">
+                        Restore this revision
+                      </button>
+                    </form>
+                  ) : null}
                 </li>
               ))}
             </ul>
