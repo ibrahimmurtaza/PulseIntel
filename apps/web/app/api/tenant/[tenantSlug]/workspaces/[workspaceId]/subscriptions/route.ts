@@ -21,26 +21,20 @@ async function readSubscriptionInput(request: NextRequest) {
   if (contentType.includes("application/json")) {
     const body = (await request.json()) as {
       sourceId?: string;
-      keywords?: string[];
+      keywords?: unknown;
     };
 
     return {
       sourceId: body.sourceId,
-      keywords: parseSubscriptionKeywordsInput(body.keywords ?? []),
+      keywords: parseSubscriptionKeywordsInput(body.keywords),
     };
   }
 
   const formData = await request.formData();
-  const rawKeywords = formData.get("keywords")?.toString() ?? "";
 
   return {
     sourceId: formData.get("sourceId")?.toString() ?? "",
-    keywords: parseSubscriptionKeywordsInput(
-      rawKeywords
-        .split(/[,\n]/)
-        .map((entry) => entry.trim())
-        .filter((entry) => entry.length > 0),
-    ),
+    keywords: parseSubscriptionKeywordsInput(formData.get("keywords")?.toString() ?? ""),
   };
 }
 

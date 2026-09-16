@@ -431,9 +431,9 @@ describe("Tenant RSS source routes", () => {
         sourceId,
         articleUrl: "https://example.com/article-1",
         title: "Launch coverage hits a new high",
-        seenCount: 1,
         evidenceCount: 1,
       });
+      expect(payload.observations[0].collectedAt).toBeTruthy();
     });
 
     it("deduplicates observations by article identity across collections", async () => {
@@ -504,6 +504,83 @@ describe("Tenant RSS source routes", () => {
         created: 1,
         duplicates: 1,
       });
+    });
+
+    it("does not mutate observations already recorded for an article identity", async () => {
+      const sourceId = await createLaunchSource();
+      const cookie = createSessionCookie({
+        userId: "usr_maya",
+        email: "maya@acme.test",
+        name: "Maya Market Lead",
+      });
+
+      const originalTitle = "Launch coverage hits a new high";
+      const originalPublishedAt = "2026-01-15T09:30:00.000Z";
+
+      const first = await collectSource(
+        createJsonRequest({
+          url: `http://localhost:3000/api/tenant/acme/sources/${sourceId}/collect`,
+          cookie,
+          body: {
+            items: [
+              {
+                url: "https://example.com/article-1",
+                title: originalTitle,
+                publishedAt: originalPublishedAt,
+              },
+            ],
+          },
+        }),
+        {
+          params: Promise.resolve({
+            tenantSlug: "acme",
+            sourceId,
+          }),
+        },
+      );
+
+      const firstPayload = (await first.json()) as {
+        observations: Array<{
+          id: string;
+          title: string;
+          publishedAt: string;
+          collectedAt: string;
+        }>;
+      };
+
+      const original = firstPayload.observations[0];
+
+      const second = await collectSource(
+        createJsonRequest({
+          url: `http://localhost:3000/api/tenant/acme/sources/${sourceId}/collect`,
+          cookie,
+          body: {
+            items: [
+              {
+                url: "https://example.com/article-1",
+                title: "Refreshed headline",
+                publishedAt: "2026-01-18T10:00:00.000Z",
+              },
+            ],
+          },
+        }),
+        {
+          params: Promise.resolve({
+            tenantSlug: "acme",
+            sourceId,
+          }),
+        },
+      );
+
+      expect(second.status).toBe(201);
+      await expect(second.json()).resolves.toMatchObject({
+        created: 0,
+        duplicates: 1,
+        observations: [],
+      });
+
+      expect(original.title).toBe(originalTitle);
+      expect(original.publishedAt).toBe(originalPublishedAt);
     });
 
     it("rejects items that are not an array", async () => {

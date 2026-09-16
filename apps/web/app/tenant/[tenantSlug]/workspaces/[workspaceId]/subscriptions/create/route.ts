@@ -49,21 +49,15 @@ export async function POST(
 
   try {
     const formData = await request.formData();
-    const rawKeywords = formData.get("keywords")?.toString() ?? "";
-
-    const keywords = parseSubscriptionKeywordsInput(
-      rawKeywords
-        .split(/[,\n]/)
-        .map((entry) => entry.trim())
-        .filter((entry) => entry.length > 0),
-    );
 
     const subscription = createSourceSubscription({
       tenantSlug,
       workspaceId,
       sourceId: formData.get("sourceId")?.toString() ?? "",
       createdByUserId: session.userId,
-      keywords,
+      keywords: parseSubscriptionKeywordsInput(
+        formData.get("keywords")?.toString() ?? "",
+      ),
     });
 
     return NextResponse.redirect(

@@ -181,7 +181,7 @@ export type Source = {
   tenantId: string;
   name: string;
   kind: SourceKind;
-  feedUrl: string;
+  config: RssSourceConfig;
   createdByUserId: string;
   createdAt: string;
 };
@@ -238,9 +238,7 @@ export type Observation = {
   articleIdentity: ArticleIdentity;
   title: string;
   publishedAt: string;
-  firstCollectedAt: string;
-  lastCollectedAt: string;
-  seenCount: number;
+  collectedAt: string;
   evidence: ObservationEvidence[];
 };
 
@@ -252,9 +250,7 @@ export type ObservationView = {
   articleUrl: string;
   title: string;
   publishedAt: string;
-  firstCollectedAt: string;
-  lastCollectedAt: string;
-  seenCount: number;
+  collectedAt: string;
   evidenceCount: number;
 };
 
@@ -1685,7 +1681,10 @@ export function restoreDashboardRevision(input: {
 }
 
 function cloneSource(source: Source): Source {
-  return { ...source };
+  return {
+    ...source,
+    config: { ...source.config },
+  };
 }
 
 function cloneSubscription(
@@ -1719,14 +1718,22 @@ function isHttpUrl(value: string): boolean {
 }
 
 function parseKeywordsInput(value: unknown): string[] {
-  if (!Array.isArray(value)) {
-    return [];
+  if (Array.isArray(value)) {
+    return parseKeywordEntries(value);
   }
 
+  if (typeof value === "string") {
+    return parseKeywordEntries(value.split(/[,\n]/));
+  }
+
+  return [];
+}
+
+function parseKeywordEntries(entries: unknown[]): string[] {
   const keywords: string[] = [];
   const seen = new Set<string>();
 
-  for (const entry of value) {
+  for (const entry of entries) {
     if (typeof entry !== "string") {
       continue;
     }
@@ -1742,14 +1749,6 @@ function parseKeywordsInput(value: unknown): string[] {
   }
 
   return keywords;
-}
-
-function parseKeywordsFromString(value: string | undefined): string[] {
-  if (!value) {
-    return [];
-  }
-
-  return parseKeywordsInput(value.split(/[,\n]/));
 }
 
 function normalizeFeedItemInput(
@@ -1797,9 +1796,7 @@ function observationToView(
     articleUrl: observation.articleIdentity.url,
     title: observation.title,
     publishedAt: observation.publishedAt,
-    firstCollectedAt: observation.firstCollectedAt,
-    lastCollectedAt: observation.lastCollectedAt,
-    seenCount: observation.seenCount,
+    collectedAt: observation.collectedAt,
     evidenceCount: observation.evidence.length,
   };
 }
@@ -1865,7 +1862,8 @@ export function createTenantRssSource(input: {
   if (
     sources.some(
       (source) =>
-        source.tenantId === tenant.id && source.feedUrl === feedUrl,
+        source.tenantId === tenant.id &&
+        source.config.feedUrl === feedUrl,
     )
   ) {
     throw new Error("source_feed_already_registered");
@@ -1876,7 +1874,7 @@ export function createTenantRssSource(input: {
     tenantId: tenant.id,
     name,
     kind: "rss",
-    feedUrl,
+    config: { feedUrl },
     createdByUserId: input.createdByUserId,
     createdAt: new Date().toISOString(),
   };
@@ -1896,7 +1894,7 @@ function sourceToView(
     tenantSlug,
     name: source.name,
     kind: source.kind,
-    feedUrl: source.feedUrl,
+    feedUrl: source.config.feedUrl,
     createdAt: source.createdAt,
     canManage,
   };
@@ -1962,25 +1960,6 @@ export function canManageWorkspaceSubscriptions(
 ): boolean {
   const membership = getWorkspaceMembership(tenantSlug, workspaceId, userId);
   return membership?.role === "admin";
-}
-
-function subscriptionToView(
-  subscription: SourceSubscription,
-  workspaceName: string,
-  sourceName: string,
-  tenantSlug: string,
-): SourceSubscriptionView {
-  return {
-    id: subscription.id,
-    tenantSlug,
-    workspaceId: subscription.workspaceId,
-    workspaceName,
-    sourceId: subscription.sourceId,
-    sourceName,
-    feedUrl: "",
-    filter: { keywords: [...subscription.filter.keywords] },
-    createdAt: subscription.createdAt,
-  };
 }
 
 export function createSourceSubscription(input: {
@@ -2049,7 +2028,7 @@ export function createSourceSubscription(input: {
     workspaceName: workspace.name,
     sourceId: source.id,
     sourceName: source.name,
-    feedUrl: source.feedUrl,
+    feedUrl: source.config.feedUrl,
     filter: { keywords: [...keywords] },
     createdAt: subscription.createdAt,
   };
@@ -2093,7 +2072,7 @@ export function listWorkspaceSourceSubscriptions(
         workspaceName: workspace.name,
         sourceId: subscription.sourceId,
         sourceName: source?.name ?? "Unknown source",
-        feedUrl: source?.feedUrl ?? "",
+        feedUrl: source?.config.feedUrl ?? "",
         filter: { keywords: [...subscription.filter.keywords] },
         createdAt: subscription.createdAt,
       };
@@ -2248,16 +2227,13 @@ export function collectTenantRssSource(input: {
 
     const articleUrl = parsed.url;
 
-    const existing = observations.find(
+    const alreadySeen = observations.some(
       (entry) =>
         entry.sourceId === source.id &&
         entry.articleIdentity.url === articleUrl,
     );
 
-    if (existing) {
-      existing.lastCollectedAt = collectedAt;
-      existing.seenCount += 1;
-      existing.evidence.push({ url: articleUrl, snapshotAt: collectedAt });
+    if (alreadySeen) {
       duplicateCount += 1;
       continue;
     }
@@ -2269,9 +2245,7 @@ export function collectTenantRssSource(input: {
       articleIdentity: { url: articleUrl },
       title: parsed.title,
       publishedAt: parsed.publishedAt,
-      firstCollectedAt: collectedAt,
-      lastCollectedAt: collectedAt,
-      seenCount: 1,
+      collectedAt,
       evidence: [{ url: articleUrl, snapshotAt: collectedAt }],
     };
 
@@ -2306,12 +2280,6 @@ export function parseRssFeedItemInput(value: unknown): RssFeedItemInput | undefi
 
 export function parseSubscriptionKeywordsInput(value: unknown): string[] {
   return parseKeywordsInput(value);
-}
-
-export function parseSubscriptionKeywordsFromString(
-  value: string | undefined,
-): string[] {
-  return parseKeywordsFromString(value);
 }
 
 export {

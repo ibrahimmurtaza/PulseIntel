@@ -83,15 +83,13 @@ export default async function WorkspaceObservationsPage({
                     </a>
                   </p>
                   <p className="muted">
-                    Published {observation.publishedAt} - first collected{" "}
-                    {observation.firstCollectedAt} - last seen{" "}
-                    {observation.lastCollectedAt}
+                    Published {observation.publishedAt} - collected{" "}
+                    {observation.collectedAt}
                   </p>
                   <p className="muted">
-                    Seen {observation.seenCount} time
-                    {observation.seenCount === 1 ? "" : "s"} -{" "}
                     {observation.evidenceCount} evidence snapshot
-                    {observation.evidenceCount === 1 ? "" : "s"}
+                    {observation.evidenceCount === 1 ? "" : "s"} (Article
+                    Identity preserved)
                   </p>
                 </li>
               ))}
