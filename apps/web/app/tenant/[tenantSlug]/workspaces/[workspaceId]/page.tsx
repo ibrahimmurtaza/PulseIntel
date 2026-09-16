@@ -64,6 +64,28 @@ export default async function WorkspaceDetailPage({
           </div>
         </div>
 
+        <div className="stack">
+          <h2>Sources and observations</h2>
+          <p className="muted">
+            Subscribe this workspace to tenant-owned sources, then view the
+            observations they generate here.
+          </p>
+          <div className="actions">
+            <Link
+              className="button secondary"
+              href={`/tenant/${tenantSlug}/workspaces/${workspace.id}/subscriptions`}
+            >
+              Manage source subscriptions
+            </Link>
+            <Link
+              className="button secondary"
+              href={`/tenant/${tenantSlug}/workspaces/${workspace.id}/observations`}
+            >
+              View observations
+            </Link>
+          </div>
+        </div>
+
         <div className="actions">
           <Link className="button secondary" href={`/tenant/${tenantSlug}/workspaces`}>
             Back to workspaces

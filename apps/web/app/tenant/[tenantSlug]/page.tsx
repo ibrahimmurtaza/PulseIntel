@@ -71,6 +71,12 @@ export default async function TenantHomePage({ params }: TenantHomePageProps) {
               >
                 Manage invitations
               </Link>
+              <Link
+                className="button"
+                href={`/tenant/${tenantSlug}/sources`}
+              >
+                Manage sources
+              </Link>
             </>
           )}
           <Link className="button secondary" href="/auth/logout">
