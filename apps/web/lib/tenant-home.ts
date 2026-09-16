@@ -170,6 +170,106 @@ export type DashboardRevisionView = {
   widgetCount: number;
 };
 
+export type SourceKind = "rss";
+
+export type RssSourceConfig = {
+  feedUrl: string;
+};
+
+export type Source = {
+  id: string;
+  tenantId: string;
+  name: string;
+  kind: SourceKind;
+  feedUrl: string;
+  createdByUserId: string;
+  createdAt: string;
+};
+
+export type SourceView = {
+  id: string;
+  tenantSlug: string;
+  name: string;
+  kind: SourceKind;
+  feedUrl: string;
+  createdAt: string;
+  canManage: boolean;
+};
+
+export type SubscriptionFilter = {
+  keywords: string[];
+};
+
+export type SourceSubscription = {
+  id: string;
+  tenantId: string;
+  workspaceId: string;
+  sourceId: string;
+  filter: SubscriptionFilter;
+  subscribedByUserId: string;
+  createdAt: string;
+};
+
+export type SourceSubscriptionView = {
+  id: string;
+  tenantSlug: string;
+  workspaceId: string;
+  workspaceName: string;
+  sourceId: string;
+  sourceName: string;
+  feedUrl: string;
+  filter: SubscriptionFilter;
+  createdAt: string;
+};
+
+export type ArticleIdentity = {
+  url: string;
+};
+
+export type ObservationEvidence = {
+  url: string;
+  snapshotAt: string;
+};
+
+export type Observation = {
+  id: string;
+  tenantId: string;
+  sourceId: string;
+  articleIdentity: ArticleIdentity;
+  title: string;
+  publishedAt: string;
+  firstCollectedAt: string;
+  lastCollectedAt: string;
+  seenCount: number;
+  evidence: ObservationEvidence[];
+};
+
+export type ObservationView = {
+  id: string;
+  tenantSlug: string;
+  sourceId: string;
+  sourceName: string;
+  articleUrl: string;
+  title: string;
+  publishedAt: string;
+  firstCollectedAt: string;
+  lastCollectedAt: string;
+  seenCount: number;
+  evidenceCount: number;
+};
+
+export type RssFeedItemInput = {
+  url: string;
+  title: string;
+  publishedAt: string;
+};
+
+export type RssCollectionResult = {
+  created: Observation[];
+  duplicateCount: number;
+  observations: ObservationView[];
+};
+
 const initialUsers: User[] = [
   {
     id: "usr_anna",
@@ -249,6 +349,9 @@ let nextWorkspaceId = 1;
 let nextDashboardId = 1;
 let nextWidgetId = 1;
 let nextRevisionId = 1;
+let nextSourceId = 1;
+let nextSubscriptionId = 1;
+let nextObservationId = 1;
 
 let users = cloneUsers(initialUsers);
 let tenantMemberships = cloneTenantMemberships(initialTenantMemberships);
@@ -257,6 +360,9 @@ let invitations: Invitation[] = [];
 let dashboards: Dashboard[] = [];
 let widgets: Widget[] = [];
 let revisions: DashboardRevision[] = [];
+let sources: Source[] = [];
+let subscriptions: SourceSubscription[] = [];
+let observations: Observation[] = [];
 
 function cloneUsers(entries: User[]): User[] {
   return entries.map((entry) => ({ ...entry }));
@@ -330,6 +436,24 @@ function createRevisionId(): string {
   return `rev_${value}`;
 }
 
+function createSourceId(): string {
+  const value = nextSourceId;
+  nextSourceId += 1;
+  return `src_${value}`;
+}
+
+function createSubscriptionId(): string {
+  const value = nextSubscriptionId;
+  nextSubscriptionId += 1;
+  return `sub_${value}`;
+}
+
+function createObservationId(): string {
+  const value = nextObservationId;
+  nextObservationId += 1;
+  return `obs_${value}`;
+}
+
 function cloneRevisionState(state: DashboardRevisionState): DashboardRevisionState {
   return {
     dashboard: cloneDashboardRecord(state.dashboard),
@@ -363,6 +487,24 @@ function getWidgetRecord(widgetId: string): Widget | undefined {
 
 function getRevisionRecord(revisionId: string): DashboardRevision | undefined {
   return revisions.find((revision) => revision.id === revisionId);
+}
+
+function getSourceRecord(sourceId: string): Source | undefined {
+  return sources.find((source) => source.id === sourceId);
+}
+
+function getSubscriptionRecord(
+  subscriptionId: string,
+): SourceSubscription | undefined {
+  return subscriptions.find(
+    (subscription) => subscription.id === subscriptionId,
+  );
+}
+
+function getObservationRecord(
+  observationId: string,
+): Observation | undefined {
+  return observations.find((observation) => observation.id === observationId);
 }
 
 function invitationToView(invitation: Invitation): InvitationView {
@@ -640,12 +782,18 @@ export function resetDemoTenantState() {
   dashboards = [];
   widgets = [];
   revisions = [];
+  sources = [];
+  subscriptions = [];
+  observations = [];
   nextUserId = 1;
   nextInvitationId = 1;
   nextWorkspaceId = 1;
   nextDashboardId = 1;
   nextWidgetId = 1;
   nextRevisionId = 1;
+  nextSourceId = 1;
+  nextSubscriptionId = 1;
+  nextObservationId = 1;
 }
 
 export function resolveTenantHome(
@@ -1535,3 +1683,639 @@ export function restoreDashboardRevision(input: {
     input.userId,
   );
 }
+
+function cloneSource(source: Source): Source {
+  return { ...source };
+}
+
+function cloneSubscription(
+  subscription: SourceSubscription,
+): SourceSubscription {
+  return {
+    ...subscription,
+    filter: { keywords: [...subscription.filter.keywords] },
+  };
+}
+
+function cloneObservation(observation: Observation): Observation {
+  return {
+    ...observation,
+    articleIdentity: { ...observation.articleIdentity },
+    evidence: observation.evidence.map((entry) => ({ ...entry })),
+  };
+}
+
+function normalizeFeedUrl(url: string): string {
+  return url.trim();
+}
+
+function isHttpUrl(value: string): boolean {
+  try {
+    const candidate = new URL(value);
+    return candidate.protocol === "http:" || candidate.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function parseKeywordsInput(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const keywords: string[] = [];
+  const seen = new Set<string>();
+
+  for (const entry of value) {
+    if (typeof entry !== "string") {
+      continue;
+    }
+
+    const trimmed = entry.trim().toLowerCase();
+
+    if (!trimmed || seen.has(trimmed)) {
+      continue;
+    }
+
+    seen.add(trimmed);
+    keywords.push(trimmed);
+  }
+
+  return keywords;
+}
+
+function parseKeywordsFromString(value: string | undefined): string[] {
+  if (!value) {
+    return [];
+  }
+
+  return parseKeywordsInput(value.split(/[,\n]/));
+}
+
+function normalizeFeedItemInput(
+  value: unknown,
+): RssFeedItemInput | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  const candidate = value as {
+    url?: unknown;
+    title?: unknown;
+    publishedAt?: unknown;
+  };
+
+  if (
+    typeof candidate.url !== "string" ||
+    typeof candidate.title !== "string" ||
+    typeof candidate.publishedAt !== "string"
+  ) {
+    return undefined;
+  }
+
+  const url = candidate.url.trim();
+  const title = candidate.title.trim();
+  const publishedAt = candidate.publishedAt.trim();
+
+  if (!url || !title || !publishedAt) {
+    return undefined;
+  }
+
+  return { url, title, publishedAt };
+}
+
+function observationToView(
+  observation: Observation,
+  tenantSlug: string,
+  sourceName: string,
+): ObservationView {
+  return {
+    id: observation.id,
+    tenantSlug,
+    sourceId: observation.sourceId,
+    sourceName,
+    articleUrl: observation.articleIdentity.url,
+    title: observation.title,
+    publishedAt: observation.publishedAt,
+    firstCollectedAt: observation.firstCollectedAt,
+    lastCollectedAt: observation.lastCollectedAt,
+    seenCount: observation.seenCount,
+    evidenceCount: observation.evidence.length,
+  };
+}
+
+function observationMatchesFilter(
+  observation: Observation,
+  filter: SubscriptionFilter,
+): boolean {
+  if (filter.keywords.length === 0) {
+    return true;
+  }
+
+  const haystack = observation.title.toLowerCase();
+
+  return filter.keywords.some((keyword) => haystack.includes(keyword));
+}
+
+export function canManageTenantSources(
+  tenantSlug: string,
+  userId: string,
+): boolean {
+  return canManageTenantInvitations(tenantSlug, userId);
+}
+
+export function createTenantRssSource(input: {
+  tenantSlug: string;
+  createdByUserId: string;
+  name: string;
+  feedUrl: string;
+}): SourceView {
+  const tenant = getTenantBySlug(input.tenantSlug);
+
+  if (!tenant) {
+    throw new Error("tenant_not_found");
+  }
+
+  if (!canManageTenantSources(input.tenantSlug, input.createdByUserId)) {
+    throw new Error("forbidden");
+  }
+
+  const name = input.name.trim();
+
+  if (!name) {
+    throw new Error("name_required");
+  }
+
+  const feedUrl = normalizeFeedUrl(input.feedUrl);
+
+  if (!feedUrl || !isHttpUrl(feedUrl)) {
+    throw new Error("feed_url_required");
+  }
+
+  if (
+    sources.some(
+      (source) =>
+        source.tenantId === tenant.id &&
+        source.name.toLowerCase() === name.toLowerCase(),
+    )
+  ) {
+    throw new Error("source_already_exists");
+  }
+
+  if (
+    sources.some(
+      (source) =>
+        source.tenantId === tenant.id && source.feedUrl === feedUrl,
+    )
+  ) {
+    throw new Error("source_feed_already_registered");
+  }
+
+  const source: Source = {
+    id: createSourceId(),
+    tenantId: tenant.id,
+    name,
+    kind: "rss",
+    feedUrl,
+    createdByUserId: input.createdByUserId,
+    createdAt: new Date().toISOString(),
+  };
+
+  sources.unshift(source);
+
+  return sourceToView(source, tenant.slug, true);
+}
+
+function sourceToView(
+  source: Source,
+  tenantSlug: string,
+  canManage: boolean,
+): SourceView {
+  return {
+    id: source.id,
+    tenantSlug,
+    name: source.name,
+    kind: source.kind,
+    feedUrl: source.feedUrl,
+    createdAt: source.createdAt,
+    canManage,
+  };
+}
+
+export function listTenantSources(
+  tenantSlug: string,
+  userId: string,
+): SourceView[] {
+  const tenant = getTenantBySlug(tenantSlug);
+
+  if (!tenant) {
+    return [];
+  }
+
+  const membership = tenantMemberships.find(
+    (entry) => entry.tenantId === tenant.id && entry.userId === userId,
+  );
+
+  if (!membership) {
+    return [];
+  }
+
+  const canManage = canManageTenantSources(tenantSlug, userId);
+
+  return sources
+    .filter((source) => source.tenantId === tenant.id)
+    .map((source) => sourceToView(source, tenant.slug, canManage));
+}
+
+export function getTenantSource(
+  tenantSlug: string,
+  sourceId: string,
+  userId: string,
+): SourceView | null {
+  const tenant = getTenantBySlug(tenantSlug);
+
+  if (!tenant) {
+    return null;
+  }
+
+  const source = getSourceRecord(sourceId);
+
+  if (!source || source.tenantId !== tenant.id) {
+    return null;
+  }
+
+  const membership = tenantMemberships.find(
+    (entry) => entry.tenantId === tenant.id && entry.userId === userId,
+  );
+
+  if (!membership) {
+    return null;
+  }
+
+  return sourceToView(source, tenant.slug, canManageTenantSources(tenantSlug, userId));
+}
+
+export function canManageWorkspaceSubscriptions(
+  tenantSlug: string,
+  workspaceId: string,
+  userId: string,
+): boolean {
+  const membership = getWorkspaceMembership(tenantSlug, workspaceId, userId);
+  return membership?.role === "admin";
+}
+
+function subscriptionToView(
+  subscription: SourceSubscription,
+  workspaceName: string,
+  sourceName: string,
+  tenantSlug: string,
+): SourceSubscriptionView {
+  return {
+    id: subscription.id,
+    tenantSlug,
+    workspaceId: subscription.workspaceId,
+    workspaceName,
+    sourceId: subscription.sourceId,
+    sourceName,
+    feedUrl: "",
+    filter: { keywords: [...subscription.filter.keywords] },
+    createdAt: subscription.createdAt,
+  };
+}
+
+export function createSourceSubscription(input: {
+  tenantSlug: string;
+  workspaceId: string;
+  sourceId: string;
+  createdByUserId: string;
+  keywords?: string[];
+}): SourceSubscriptionView {
+  const tenant = getTenantBySlug(input.tenantSlug);
+
+  if (!tenant) {
+    throw new Error("tenant_not_found");
+  }
+
+  const workspace = getWorkspaceById(input.workspaceId);
+
+  if (!workspace || workspace.tenantId !== tenant.id) {
+    throw new Error("workspace_not_found");
+  }
+
+  const source = getSourceRecord(input.sourceId);
+
+  if (!source || source.tenantId !== tenant.id) {
+    throw new Error("source_not_found");
+  }
+
+  if (
+    !canManageWorkspaceSubscriptions(
+      input.tenantSlug,
+      input.workspaceId,
+      input.createdByUserId,
+    )
+  ) {
+    throw new Error("forbidden");
+  }
+
+  if (
+    subscriptions.some(
+      (subscription) =>
+        subscription.workspaceId === workspace.id &&
+        subscription.sourceId === source.id,
+    )
+  ) {
+    throw new Error("subscription_already_exists");
+  }
+
+  const keywords = parseKeywordsInput(input.keywords ?? []);
+
+  const subscription: SourceSubscription = {
+    id: createSubscriptionId(),
+    tenantId: tenant.id,
+    workspaceId: workspace.id,
+    sourceId: source.id,
+    filter: { keywords },
+    subscribedByUserId: input.createdByUserId,
+    createdAt: new Date().toISOString(),
+  };
+
+  subscriptions.unshift(subscription);
+
+  return {
+    id: subscription.id,
+    tenantSlug: tenant.slug,
+    workspaceId: subscription.workspaceId,
+    workspaceName: workspace.name,
+    sourceId: source.id,
+    sourceName: source.name,
+    feedUrl: source.feedUrl,
+    filter: { keywords: [...keywords] },
+    createdAt: subscription.createdAt,
+  };
+}
+
+export function listWorkspaceSourceSubscriptions(
+  tenantSlug: string,
+  workspaceId: string,
+  userId: string,
+): SourceSubscriptionView[] {
+  const tenant = getTenantBySlug(tenantSlug);
+
+  if (!tenant) {
+    return [];
+  }
+
+  const workspace = getWorkspaceById(workspaceId);
+
+  if (!workspace || workspace.tenantId !== tenant.id) {
+    return [];
+  }
+
+  const membership = workspaceMemberships.find(
+    (entry) =>
+      entry.workspaceId === workspaceId && entry.userId === userId,
+  );
+
+  if (!membership) {
+    return [];
+  }
+
+  return subscriptions
+    .filter((subscription) => subscription.workspaceId === workspaceId)
+    .map((subscription) => {
+      const source = getSourceRecord(subscription.sourceId);
+
+      return {
+        id: subscription.id,
+        tenantSlug: tenant.slug,
+        workspaceId: subscription.workspaceId,
+        workspaceName: workspace.name,
+        sourceId: subscription.sourceId,
+        sourceName: source?.name ?? "Unknown source",
+        feedUrl: source?.feedUrl ?? "",
+        filter: { keywords: [...subscription.filter.keywords] },
+        createdAt: subscription.createdAt,
+      };
+    });
+}
+
+export function listWorkspaceSources(
+  tenantSlug: string,
+  workspaceId: string,
+  userId: string,
+): SourceView[] {
+  const tenant = getTenantBySlug(tenantSlug);
+
+  if (!tenant) {
+    return [];
+  }
+
+  const workspace = getWorkspaceById(workspaceId);
+
+  if (!workspace || workspace.tenantId !== tenant.id) {
+    return [];
+  }
+
+  const membership = workspaceMemberships.find(
+    (entry) =>
+      entry.workspaceId === workspaceId && entry.userId === userId,
+  );
+
+  if (!membership) {
+    return [];
+  }
+
+  const subscribedSourceIds = new Set(
+    subscriptions
+      .filter((subscription) => subscription.workspaceId === workspaceId)
+      .map((subscription) => subscription.sourceId),
+  );
+
+  const canManage = canManageWorkspaceSubscriptions(
+    tenantSlug,
+    workspaceId,
+    userId,
+  );
+
+  return sources
+    .filter(
+      (source) =>
+        source.tenantId === tenant.id && subscribedSourceIds.has(source.id),
+    )
+    .map((source) => sourceToView(source, tenant.slug, canManage));
+}
+
+export function listWorkspaceObservations(
+  tenantSlug: string,
+  workspaceId: string,
+  userId: string,
+): ObservationView[] {
+  const tenant = getTenantBySlug(tenantSlug);
+
+  if (!tenant) {
+    return [];
+  }
+
+  const workspace = getWorkspaceById(workspaceId);
+
+  if (!workspace || workspace.tenantId !== tenant.id) {
+    return [];
+  }
+
+  const membership = workspaceMemberships.find(
+    (entry) =>
+      entry.workspaceId === workspaceId && entry.userId === userId,
+  );
+
+  if (!membership) {
+    return [];
+  }
+
+  const workspaceSubscriptions = subscriptions.filter(
+    (subscription) => subscription.workspaceId === workspaceId,
+  );
+
+  const observationsBySourceId = new Map<string, SourceSubscription>();
+
+  for (const subscription of workspaceSubscriptions) {
+    observationsBySourceId.set(subscription.sourceId, subscription);
+  }
+
+  return observations
+    .filter((observation) =>
+      observationsBySourceId.has(observation.sourceId),
+    )
+    .filter((observation) => {
+      const subscription = observationsBySourceId.get(observation.sourceId);
+
+      if (!subscription) {
+        return false;
+      }
+
+      return observationMatchesFilter(observation, subscription.filter);
+    })
+    .map((observation) => {
+      const source = getSourceRecord(observation.sourceId);
+      return observationToView(
+        observation,
+        tenant.slug,
+        source?.name ?? "Unknown source",
+      );
+    });
+}
+
+export function collectTenantRssSource(input: {
+  tenantSlug: string;
+  sourceId: string;
+  collectedByUserId: string;
+  items: unknown;
+}): RssCollectionResult {
+  const tenant = getTenantBySlug(input.tenantSlug);
+
+  if (!tenant) {
+    throw new Error("tenant_not_found");
+  }
+
+  if (!canManageTenantSources(input.tenantSlug, input.collectedByUserId)) {
+    throw new Error("forbidden");
+  }
+
+  const source = getSourceRecord(input.sourceId);
+
+  if (!source || source.tenantId !== tenant.id) {
+    throw new Error("source_not_found");
+  }
+
+  if (source.kind !== "rss") {
+    throw new Error("source_kind_unsupported");
+  }
+
+  if (!Array.isArray(input.items)) {
+    throw new Error("items_required");
+  }
+
+  const created: Observation[] = [];
+  let duplicateCount = 0;
+  const collectedAt = new Date().toISOString();
+
+  for (const rawItem of input.items) {
+    const parsed = parseFeedItemInput(rawItem);
+
+    if (!parsed) {
+      throw new Error("feed_item_required");
+    }
+
+    const articleUrl = parsed.url;
+
+    const existing = observations.find(
+      (entry) =>
+        entry.sourceId === source.id &&
+        entry.articleIdentity.url === articleUrl,
+    );
+
+    if (existing) {
+      existing.lastCollectedAt = collectedAt;
+      existing.seenCount += 1;
+      existing.evidence.push({ url: articleUrl, snapshotAt: collectedAt });
+      duplicateCount += 1;
+      continue;
+    }
+
+    const observation: Observation = {
+      id: createObservationId(),
+      tenantId: tenant.id,
+      sourceId: source.id,
+      articleIdentity: { url: articleUrl },
+      title: parsed.title,
+      publishedAt: parsed.publishedAt,
+      firstCollectedAt: collectedAt,
+      lastCollectedAt: collectedAt,
+      seenCount: 1,
+      evidence: [{ url: articleUrl, snapshotAt: collectedAt }],
+    };
+
+    observations.unshift(observation);
+    created.push(observation);
+  }
+
+  const resultView: ObservationView[] = created.map((observation) =>
+    observationToView(observation, tenant.slug, source.name),
+  );
+
+  return { created, duplicateCount, observations: resultView };
+}
+
+function parseFeedItemInput(value: unknown): RssFeedItemInput | undefined {
+  const parsed = normalizeFeedItemInput(value);
+
+  if (!parsed) {
+    return undefined;
+  }
+
+  if (!isHttpUrl(parsed.url)) {
+    return undefined;
+  }
+
+  return parsed;
+}
+
+export function parseRssFeedItemInput(value: unknown): RssFeedItemInput | undefined {
+  return parseFeedItemInput(value);
+}
+
+export function parseSubscriptionKeywordsInput(value: unknown): string[] {
+  return parseKeywordsInput(value);
+}
+
+export function parseSubscriptionKeywordsFromString(
+  value: string | undefined,
+): string[] {
+  return parseKeywordsFromString(value);
+}
+
+export {
+  cloneSource,
+  cloneSubscription,
+  cloneObservation,
+};
