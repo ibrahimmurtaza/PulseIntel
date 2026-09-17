@@ -170,18 +170,24 @@ export type DashboardRevisionView = {
   widgetCount: number;
 };
 
-export type SourceKind = "rss";
+export type SourceKind = "rss" | "manual";
 
 export type RssSourceConfig = {
   feedUrl: string;
 };
+
+export type ManualSourceConfig = {
+  description?: string;
+};
+
+export type SourceConfig = RssSourceConfig | ManualSourceConfig;
 
 export type Source = {
   id: string;
   tenantId: string;
   name: string;
   kind: SourceKind;
-  config: RssSourceConfig;
+  config: SourceConfig;
   createdByUserId: string;
   createdAt: string;
 };
@@ -192,6 +198,7 @@ export type SourceView = {
   name: string;
   kind: SourceKind;
   feedUrl: string;
+  description: string;
   createdAt: string;
   canManage: boolean;
 };
@@ -239,6 +246,7 @@ export type Observation = {
   title: string;
   publishedAt: string;
   collectedAt: string;
+  citationNote?: string;
   evidence: ObservationEvidence[];
 };
 
@@ -247,11 +255,20 @@ export type ObservationView = {
   tenantSlug: string;
   sourceId: string;
   sourceName: string;
+  sourceKind: SourceKind;
   articleUrl: string;
   title: string;
   publishedAt: string;
   collectedAt: string;
   evidenceCount: number;
+  citationNote?: string;
+};
+
+export type ManualObservationInput = {
+  title: string;
+  publishedAt: string;
+  citationNote: string;
+  articleUrl?: string;
 };
 
 export type RssFeedItemInput = {
@@ -1783,21 +1800,46 @@ function normalizeFeedItemInput(
   return { url, title, publishedAt };
 }
 
+const ISO_PUBLISHED_AT_PATTERN =
+  /^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?$/;
+
+function parsePublishedAt(value: string): string | undefined {
+  const trimmed = value.trim();
+
+  if (!trimmed || !ISO_PUBLISHED_AT_PATTERN.test(trimmed)) {
+    return undefined;
+  }
+
+  const timestamp = Date.parse(trimmed);
+
+  if (!Number.isFinite(timestamp)) {
+    return undefined;
+  }
+
+  return trimmed;
+}
+
 function observationToView(
   observation: Observation,
   tenantSlug: string,
-  sourceName: string,
+  source: Source | undefined,
 ): ObservationView {
+  if (!source) {
+    throw new Error("source_not_found");
+  }
+
   return {
     id: observation.id,
     tenantSlug,
     sourceId: observation.sourceId,
-    sourceName,
+    sourceName: source.name,
+    sourceKind: source.kind,
     articleUrl: observation.articleIdentity.url,
     title: observation.title,
     publishedAt: observation.publishedAt,
     collectedAt: observation.collectedAt,
     evidenceCount: observation.evidence.length,
+    citationNote: observation.citationNote,
   };
 }
 
@@ -1863,7 +1905,8 @@ export function createTenantRssSource(input: {
     sources.some(
       (source) =>
         source.tenantId === tenant.id &&
-        source.config.feedUrl === feedUrl,
+        source.kind === "rss" &&
+        (source.config as RssSourceConfig).feedUrl === feedUrl,
     )
   ) {
     throw new Error("source_feed_already_registered");
@@ -1884,17 +1927,83 @@ export function createTenantRssSource(input: {
   return sourceToView(source, tenant.slug, true);
 }
 
+export function createTenantManualSource(input: {
+  tenantSlug: string;
+  createdByUserId: string;
+  name: string;
+  description?: string;
+}): SourceView {
+  const tenant = getTenantBySlug(input.tenantSlug);
+
+  if (!tenant) {
+    throw new Error("tenant_not_found");
+  }
+
+  if (!canManageTenantSources(input.tenantSlug, input.createdByUserId)) {
+    throw new Error("forbidden");
+  }
+
+  const name = input.name.trim();
+
+  if (!name) {
+    throw new Error("name_required");
+  }
+
+  if (
+    sources.some(
+      (source) =>
+        source.tenantId === tenant.id &&
+        source.name.toLowerCase() === name.toLowerCase(),
+    )
+  ) {
+    throw new Error("source_already_exists");
+  }
+
+  const description = input.description?.trim();
+  const config: ManualSourceConfig = description ? { description } : {};
+
+  const source: Source = {
+    id: createSourceId(),
+    tenantId: tenant.id,
+    name,
+    kind: "manual",
+    config,
+    createdByUserId: input.createdByUserId,
+    createdAt: new Date().toISOString(),
+  };
+
+  sources.unshift(source);
+
+  return sourceToView(source, tenant.slug, true);
+}
+
 function sourceToView(
   source: Source,
   tenantSlug: string,
   canManage: boolean,
 ): SourceView {
+  if (source.kind === "rss") {
+    const rssConfig = source.config as RssSourceConfig;
+    return {
+      id: source.id,
+      tenantSlug,
+      name: source.name,
+      kind: source.kind,
+      feedUrl: rssConfig.feedUrl,
+      description: "",
+      createdAt: source.createdAt,
+      canManage,
+    };
+  }
+
+  const manualConfig = source.config as ManualSourceConfig;
   return {
     id: source.id,
     tenantSlug,
     name: source.name,
     kind: source.kind,
-    feedUrl: source.config.feedUrl,
+    feedUrl: "",
+    description: manualConfig.description ?? "",
     createdAt: source.createdAt,
     canManage,
   };
@@ -1960,6 +2069,15 @@ export function canManageWorkspaceSubscriptions(
 ): boolean {
   const membership = getWorkspaceMembership(tenantSlug, workspaceId, userId);
   return membership?.role === "admin";
+}
+
+export function canManageWorkspaceObservations(
+  tenantSlug: string,
+  workspaceId: string,
+  userId: string,
+): boolean {
+  const membership = getWorkspaceMembership(tenantSlug, workspaceId, userId);
+  return membership?.role === "admin" || membership?.role === "editor";
 }
 
 export function createSourceSubscription(input: {
@@ -2028,7 +2146,8 @@ export function createSourceSubscription(input: {
     workspaceName: workspace.name,
     sourceId: source.id,
     sourceName: source.name,
-    feedUrl: source.config.feedUrl,
+    feedUrl:
+      source.kind === "rss" ? (source.config as RssSourceConfig).feedUrl : "",
     filter: { keywords: [...keywords] },
     createdAt: subscription.createdAt,
   };
@@ -2072,7 +2191,10 @@ export function listWorkspaceSourceSubscriptions(
         workspaceName: workspace.name,
         sourceId: subscription.sourceId,
         sourceName: source?.name ?? "Unknown source",
-        feedUrl: source?.config.feedUrl ?? "",
+        feedUrl:
+          source?.kind === "rss"
+            ? (source.config as RssSourceConfig).feedUrl
+            : "",
         filter: { keywords: [...subscription.filter.keywords] },
         createdAt: subscription.createdAt,
       };
@@ -2176,11 +2298,7 @@ export function listWorkspaceObservations(
     })
     .map((observation) => {
       const source = getSourceRecord(observation.sourceId);
-      return observationToView(
-        observation,
-        tenant.slug,
-        source?.name ?? "Unknown source",
-      );
+      return observationToView(observation, tenant.slug, source);
     });
 }
 
@@ -2254,10 +2372,108 @@ export function collectTenantRssSource(input: {
   }
 
   const resultView: ObservationView[] = created.map((observation) =>
-    observationToView(observation, tenant.slug, source.name),
+    observationToView(observation, tenant.slug, source),
   );
 
   return { created, duplicateCount, observations: resultView };
+}
+
+export function createManualObservation(input: {
+  tenantSlug: string;
+  workspaceId: string;
+  sourceId: string;
+  createdByUserId: string;
+  title: string;
+  publishedAt: string;
+  citationNote: string;
+  articleUrl?: string;
+}): ObservationView {
+  const tenant = getTenantBySlug(input.tenantSlug);
+
+  if (!tenant) {
+    throw new Error("tenant_not_found");
+  }
+
+  const workspace = getWorkspaceById(input.workspaceId);
+
+  if (!workspace || workspace.tenantId !== tenant.id) {
+    throw new Error("workspace_not_found");
+  }
+
+  if (
+    !canManageWorkspaceObservations(
+      input.tenantSlug,
+      input.workspaceId,
+      input.createdByUserId,
+    )
+  ) {
+    throw new Error("forbidden");
+  }
+
+  const source = getSourceRecord(input.sourceId);
+
+  if (!source || source.tenantId !== tenant.id) {
+    throw new Error("source_not_found");
+  }
+
+  if (source.kind !== "manual") {
+    throw new Error("source_kind_unsupported");
+  }
+
+  const title = input.title.trim();
+
+  if (!title) {
+    throw new Error("title_required");
+  }
+
+  const publishedAt = parsePublishedAt(input.publishedAt);
+
+  if (!publishedAt) {
+    throw new Error(input.publishedAt.trim() ? "published_at_invalid" : "published_at_required");
+  }
+
+  const citationNote = input.citationNote.trim();
+
+  if (!citationNote) {
+    throw new Error("citation_note_required");
+  }
+
+  const articleUrl = input.articleUrl?.trim() ?? "";
+
+  if (articleUrl && !isHttpUrl(articleUrl)) {
+    throw new Error("article_url_invalid");
+  }
+
+  const subscription = subscriptions.find(
+    (entry) =>
+      entry.workspaceId === workspace.id && entry.sourceId === source.id,
+  );
+
+  if (!subscription) {
+    throw new Error("source_not_subscribed");
+  }
+
+  const collectedAt = new Date().toISOString();
+
+  const evidence: ObservationEvidence[] = articleUrl
+    ? [{ url: articleUrl, snapshotAt: collectedAt }]
+    : [];
+
+  const observation: Observation = {
+    id: createObservationId(),
+    tenantId: tenant.id,
+    sourceId: source.id,
+    articleIdentity: { url: articleUrl },
+    title,
+    publishedAt,
+    collectedAt,
+    citationNote,
+    evidence,
+  };
+
+  observations.unshift(observation);
+
+  return observationToView(observation, tenant.slug, source);
 }
 
 function parseFeedItemInput(value: unknown): RssFeedItemInput | undefined {

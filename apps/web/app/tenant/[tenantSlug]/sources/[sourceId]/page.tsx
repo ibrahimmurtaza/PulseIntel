@@ -29,6 +29,8 @@ function describeError(error?: string) {
       return "Only tenant admins can collect sources.";
     case "source_not_found":
       return "That source could not be found in this tenant.";
+    case "source_kind_unsupported":
+      return "Manual sources are not collected automatically.";
     default:
       return undefined;
   }
@@ -67,7 +69,16 @@ export default async function TenantSourceDetailPage({
         <div className="stack">
           <span className="pill">{source.kind.toUpperCase()} source</span>
           <h1>{source.name}</h1>
-          <p className="muted">Feed URL: {source.feedUrl}</p>
+          {source.kind === "rss" ? (
+            <p className="muted">Feed URL: {source.feedUrl}</p>
+          ) : source.description ? (
+            <p className="muted">{source.description}</p>
+          ) : (
+            <p className="muted">
+              Subscribed workspaces record observations here with a required
+              citation note as provenance.
+            </p>
+          )}
           <p className="muted">Created {source.createdAt}</p>
         </div>
 
@@ -80,7 +91,7 @@ export default async function TenantSourceDetailPage({
         ) : null}
         {errorMessage ? <p className="notice error">{errorMessage}</p> : null}
 
-        {source.canManage ? (
+        {source.canManage && source.kind === "rss" ? (
           <form
             action={`/tenant/${tenantSlug}/sources/${source.id}/collect`}
             className="stack"
@@ -120,7 +131,16 @@ export default async function TenantSourceDetailPage({
               </Link>
             </div>
           </form>
-        ) : null}
+        ) : (
+          <div className="actions">
+            <Link
+              className="button secondary"
+              href={`/tenant/${tenantSlug}/sources`}
+            >
+              Back to sources
+            </Link>
+          </div>
+        )}
 
         <div className="stack">
           <h2>All tenant sources</h2>
@@ -133,7 +153,11 @@ export default async function TenantSourceDetailPage({
                     {entry.id === source.id ? "Current" : entry.kind.toUpperCase()}
                   </span>
                 </div>
-                <p className="muted">{entry.feedUrl}</p>
+                {entry.kind === "rss" ? (
+                  <p className="muted">{entry.feedUrl}</p>
+                ) : entry.description ? (
+                  <p className="muted">{entry.description}</p>
+                ) : null}
               </li>
             ))}
           </ul>

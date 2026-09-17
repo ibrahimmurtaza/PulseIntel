@@ -28,6 +28,8 @@ function describeError(error?: string) {
       return "A source with that name already exists in this tenant.";
     case "source_feed_already_registered":
       return "A source already uses that feed URL in this tenant.";
+    case "source_kind_unsupported":
+      return "That source kind is not supported here.";
     case "forbidden":
       return "Only tenant admins can manage sources.";
     default:
@@ -82,6 +84,7 @@ export default async function TenantSourcesPage({
             className="stack"
             method="post"
           >
+            <h2>Create RSS source</h2>
             <div className="field-grid">
               <label className="field">
                 <span>Name</span>
@@ -98,8 +101,48 @@ export default async function TenantSourcesPage({
               </label>
             </div>
             <div className="actions">
-              <button className="button" type="submit">
+              <button className="button" name="kind" type="submit" value="rss">
                 Create RSS source
+              </button>
+            </div>
+          </form>
+        ) : null}
+
+        {canManage ? (
+          <form
+            action={`/tenant/${tenantSlug}/sources/create`}
+            className="stack"
+            method="post"
+          >
+            <h2>Create Manual source</h2>
+            <p className="muted">
+              Manual sources let workspace members record observations
+              directly with a required citation note as provenance. Tenant admins
+              still define the source here; workspaces subscribe to it like
+              any other.
+            </p>
+            <div className="field-grid">
+              <label className="field">
+                <span>Name</span>
+                <input name="name" required type="text" />
+              </label>
+              <label className="field">
+                <span>Description (optional)</span>
+                <input
+                  name="description"
+                  placeholder="What this manual source captures"
+                  type="text"
+                />
+              </label>
+            </div>
+            <div className="actions">
+              <button
+                className="button"
+                name="kind"
+                type="submit"
+                value="manual"
+              >
+                Create Manual source
               </button>
             </div>
           </form>
@@ -110,7 +153,7 @@ export default async function TenantSourcesPage({
           {sources.length === 0 ? (
             <p className="muted">
               No sources defined yet for this tenant.
-              {canManage ? " Use the form above to register an RSS feed." : ""}
+              {canManage ? " Use the forms above to register one." : ""}
             </p>
           ) : (
             <ul className="workspace-list">
@@ -120,7 +163,16 @@ export default async function TenantSourcesPage({
                     <strong>{source.name}</strong>
                     <span className="pill">{source.kind.toUpperCase()}</span>
                   </div>
-                  <p className="muted">{source.feedUrl}</p>
+                  {source.kind === "rss" ? (
+                    <p className="muted">{source.feedUrl}</p>
+                  ) : source.description ? (
+                    <p className="muted">{source.description}</p>
+                  ) : (
+                    <p className="muted">
+                      No description. Subscribed workspaces record observations
+                      here.
+                    </p>
+                  )}
                   <div className="actions">
                     <Link
                       className="button secondary"
