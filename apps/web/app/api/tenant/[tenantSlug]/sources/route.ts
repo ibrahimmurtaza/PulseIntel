@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { getSessionFromRequest } from "@/lib/request-auth";
+import { toErrorResponse } from "@/lib/route-errors";
 import {
+  createTenantManualSource,
   createTenantRssSource,
   listTenantSources,
+  type SourceKind,
 } from "@/lib/tenant-home";
 
 type TenantSourcesRouteContext = {
@@ -12,40 +15,32 @@ type TenantSourcesRouteContext = {
   }>;
 };
 
-async function readSourceInput(request: NextRequest) {
+type SourceInput = {
+  name?: string;
+  kind?: string;
+  feedUrl?: string;
+  description?: string;
+};
+
+async function readSourceInput(request: NextRequest): Promise<SourceInput> {
   const contentType = request.headers.get("content-type") ?? "";
 
   if (contentType.includes("application/json")) {
-    return (await request.json()) as {
-      name?: string;
-      feedUrl?: string;
-    };
+    return (await request.json()) as SourceInput;
   }
 
   const formData = await request.formData();
 
   return {
     name: formData.get("name")?.toString(),
+    kind: formData.get("kind")?.toString(),
     feedUrl: formData.get("feedUrl")?.toString(),
+    description: formData.get("description")?.toString(),
   };
 }
 
-function toErrorResponse(error: unknown) {
-  const message = error instanceof Error ? error.message : "unknown_error";
-
-  switch (message) {
-    case "name_required":
-    case "feed_url_required":
-    case "source_already_exists":
-    case "source_feed_already_registered":
-      return NextResponse.json({ error: message }, { status: 400 });
-    case "tenant_not_found":
-      return NextResponse.json({ error: message }, { status: 404 });
-    case "forbidden":
-      return NextResponse.json({ error: message }, { status: 403 });
-    default:
-      return NextResponse.json({ error: "unknown_error" }, { status: 500 });
-  }
+function normalizeSourceKind(value: string | undefined): SourceKind {
+  return value === "manual" ? "manual" : "rss";
 }
 
 export async function GET(
@@ -84,12 +79,21 @@ export async function POST(
 
   try {
     const input = await readSourceInput(request);
-    const source = createTenantRssSource({
-      tenantSlug,
-      createdByUserId: session.userId,
-      name: input.name ?? "",
-      feedUrl: input.feedUrl ?? "",
-    });
+    const kind = normalizeSourceKind(input.kind);
+    const source =
+      kind === "manual"
+        ? createTenantManualSource({
+            tenantSlug,
+            createdByUserId: session.userId,
+            name: input.name ?? "",
+            description: input.description,
+          })
+        : createTenantRssSource({
+            tenantSlug,
+            createdByUserId: session.userId,
+            name: input.name ?? "",
+            feedUrl: input.feedUrl ?? "",
+          });
 
     return NextResponse.json({ source }, { status: 201 });
   } catch (error) {

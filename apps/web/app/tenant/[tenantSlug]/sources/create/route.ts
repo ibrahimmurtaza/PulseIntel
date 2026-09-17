@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { getSessionFromRequest } from "@/lib/request-auth";
-import { createTenantRssSource } from "@/lib/tenant-home";
+import {
+  createTenantManualSource,
+  createTenantRssSource,
+} from "@/lib/tenant-home";
 
 type CreateSourcePageRouteContext = {
   params: Promise<{
@@ -42,12 +45,23 @@ export async function POST(
 
   try {
     const formData = await request.formData();
-    const source = createTenantRssSource({
-      tenantSlug,
-      createdByUserId: session.userId,
-      name: formData.get("name")?.toString() ?? "",
-      feedUrl: formData.get("feedUrl")?.toString() ?? "",
-    });
+    const kind = formData.get("kind")?.toString() === "manual" ? "manual" : "rss";
+    const name = formData.get("name")?.toString() ?? "";
+
+    const source =
+      kind === "manual"
+        ? createTenantManualSource({
+            tenantSlug,
+            createdByUserId: session.userId,
+            name,
+            description: formData.get("description")?.toString(),
+          })
+        : createTenantRssSource({
+            tenantSlug,
+            createdByUserId: session.userId,
+            name,
+            feedUrl: formData.get("feedUrl")?.toString() ?? "",
+          });
 
     return NextResponse.redirect(
       new URL(
