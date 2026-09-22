@@ -201,6 +201,7 @@ export type SourceView = {
   description: string;
   createdAt: string;
   canManage: boolean;
+  health: SourceHealthStatus;
 };
 
 export type SubscriptionFilter = {
@@ -281,6 +282,46 @@ export type RssCollectionResult = {
   created: Observation[];
   duplicateCount: number;
   observations: ObservationView[];
+  run: CollectionRunView;
+};
+
+export type CollectionRunOutcome = "success" | "failure";
+
+export type CollectionRun = {
+  id: string;
+  tenantId: string;
+  sourceId: string;
+  outcome: CollectionRunOutcome;
+  itemsCollected: number;
+  duplicatesSkipped: number;
+  errorMessage?: string;
+  startedAt: string;
+  completedAt: string;
+};
+
+export type CollectionRunView = {
+  id: string;
+  tenantSlug: string;
+  sourceId: string;
+  sourceName: string;
+  outcome: CollectionRunOutcome;
+  itemsCollected: number;
+  duplicatesSkipped: number;
+  errorMessage?: string;
+  startedAt: string;
+  completedAt: string;
+};
+
+export type SourceHealthStatus = "healthy" | "degraded" | "failing" | "unknown";
+
+export type SourceHealthView = {
+  sourceId: string;
+  tenantSlug: string;
+  status: SourceHealthStatus;
+  lastRunAt?: string;
+  lastSuccessAt?: string;
+  recentFailureCount: number;
+  totalRuns: number;
 };
 
 const initialUsers: User[] = [
@@ -365,6 +406,7 @@ let nextRevisionId = 1;
 let nextSourceId = 1;
 let nextSubscriptionId = 1;
 let nextObservationId = 1;
+let nextCollectionRunId = 1;
 
 let users = cloneUsers(initialUsers);
 let tenantMemberships = cloneTenantMemberships(initialTenantMemberships);
@@ -376,6 +418,7 @@ let revisions: DashboardRevision[] = [];
 let sources: Source[] = [];
 let subscriptions: SourceSubscription[] = [];
 let observations: Observation[] = [];
+let collectionRuns: CollectionRun[] = [];
 
 function cloneUsers(entries: User[]): User[] {
   return entries.map((entry) => ({ ...entry }));
@@ -465,6 +508,12 @@ function createObservationId(): string {
   const value = nextObservationId;
   nextObservationId += 1;
   return `obs_${value}`;
+}
+
+function createCollectionRunId(): string {
+  const value = nextCollectionRunId;
+  nextCollectionRunId += 1;
+  return `run_${value}`;
 }
 
 function cloneRevisionState(state: DashboardRevisionState): DashboardRevisionState {
@@ -798,6 +847,7 @@ export function resetDemoTenantState() {
   sources = [];
   subscriptions = [];
   observations = [];
+  collectionRuns = [];
   nextUserId = 1;
   nextInvitationId = 1;
   nextWorkspaceId = 1;
@@ -807,6 +857,7 @@ export function resetDemoTenantState() {
   nextSourceId = 1;
   nextSubscriptionId = 1;
   nextObservationId = 1;
+  nextCollectionRunId = 1;
 }
 
 export function resolveTenantHome(
@@ -1982,6 +2033,8 @@ function sourceToView(
   tenantSlug: string,
   canManage: boolean,
 ): SourceView {
+  const health = computeSourceHealthStatus(source.id);
+
   if (source.kind === "rss") {
     const rssConfig = source.config as RssSourceConfig;
     return {
@@ -1993,6 +2046,7 @@ function sourceToView(
       description: "",
       createdAt: source.createdAt,
       canManage,
+      health,
     };
   }
 
@@ -2006,6 +2060,7 @@ function sourceToView(
     description: manualConfig.description ?? "",
     createdAt: source.createdAt,
     canManage,
+    health,
   };
 }
 
@@ -2328,54 +2383,82 @@ export function collectTenantRssSource(input: {
     throw new Error("source_kind_unsupported");
   }
 
-  if (!Array.isArray(input.items)) {
-    throw new Error("items_required");
-  }
+  const startedAt = new Date().toISOString();
 
-  const created: Observation[] = [];
-  let duplicateCount = 0;
-  const collectedAt = new Date().toISOString();
+  try {
+    if (!Array.isArray(input.items)) {
+      throw new Error("items_required");
+    }
+    const created: Observation[] = [];
+    let duplicateCount = 0;
+    const collectedAt = new Date().toISOString();
 
-  for (const rawItem of input.items) {
-    const parsed = parseFeedItemInput(rawItem);
+    for (const rawItem of input.items) {
+      const parsed = parseFeedItemInput(rawItem);
 
-    if (!parsed) {
-      throw new Error("feed_item_required");
+      if (!parsed) {
+        throw new Error("feed_item_required");
+      }
+
+      const articleUrl = parsed.url;
+
+      const alreadySeen = observations.some(
+        (entry) =>
+          entry.sourceId === source.id &&
+          entry.articleIdentity.url === articleUrl,
+      );
+
+      if (alreadySeen) {
+        duplicateCount += 1;
+        continue;
+      }
+
+      const observation: Observation = {
+        id: createObservationId(),
+        tenantId: tenant.id,
+        sourceId: source.id,
+        articleIdentity: { url: articleUrl },
+        title: parsed.title,
+        publishedAt: parsed.publishedAt,
+        collectedAt,
+        evidence: [{ url: articleUrl, snapshotAt: collectedAt }],
+      };
+
+      observations.unshift(observation);
+      created.push(observation);
     }
 
-    const articleUrl = parsed.url;
-
-    const alreadySeen = observations.some(
-      (entry) =>
-        entry.sourceId === source.id &&
-        entry.articleIdentity.url === articleUrl,
+    const resultView: ObservationView[] = created.map((observation) =>
+      observationToView(observation, tenant.slug, source),
     );
 
-    if (alreadySeen) {
-      duplicateCount += 1;
-      continue;
-    }
-
-    const observation: Observation = {
-      id: createObservationId(),
+    const run = recordCollectionRun({
       tenantId: tenant.id,
       sourceId: source.id,
-      articleIdentity: { url: articleUrl },
-      title: parsed.title,
-      publishedAt: parsed.publishedAt,
-      collectedAt,
-      evidence: [{ url: articleUrl, snapshotAt: collectedAt }],
-    };
+      outcome: "success",
+      itemsCollected: created.length,
+      duplicatesSkipped: duplicateCount,
+      startedAt,
+    });
 
-    observations.unshift(observation);
-    created.push(observation);
+    const runView = collectionRunToView(run, tenant.slug, source.name);
+
+    return { created, duplicateCount, observations: resultView, run: runView };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "unknown_error";
+
+    recordCollectionRun({
+      tenantId: tenant.id,
+      sourceId: source.id,
+      outcome: "failure",
+      itemsCollected: 0,
+      duplicatesSkipped: 0,
+      errorMessage,
+      startedAt,
+    });
+
+    throw error;
   }
-
-  const resultView: ObservationView[] = created.map((observation) =>
-    observationToView(observation, tenant.slug, source),
-  );
-
-  return { created, duplicateCount, observations: resultView };
 }
 
 export function createManualObservation(input: {
@@ -2503,3 +2586,156 @@ export {
   cloneSubscription,
   cloneObservation,
 };
+
+function computeSourceHealthStatus(sourceId: string): SourceHealthStatus {
+  const sourceRuns = collectionRuns.filter(
+    (run) => run.sourceId === sourceId,
+  );
+
+  if (sourceRuns.length === 0) {
+    return "unknown";
+  }
+
+  const sorted = [...sourceRuns].sort(
+    (a, b) => new Date(b.completedAt).getTime() - new Date(a.completedAt).getTime(),
+  );
+
+  if (sorted[0].outcome === "success") {
+    return "healthy";
+  }
+
+  const recentWindow = sorted.slice(0, 5);
+  const allFailed = recentWindow.every((run) => run.outcome === "failure");
+
+  return allFailed ? "failing" : "degraded";
+}
+
+function collectionRunToView(
+  run: CollectionRun,
+  tenantSlug: string,
+  sourceName: string,
+): CollectionRunView {
+  return {
+    id: run.id,
+    tenantSlug,
+    sourceId: run.sourceId,
+    sourceName,
+    outcome: run.outcome,
+    itemsCollected: run.itemsCollected,
+    duplicatesSkipped: run.duplicatesSkipped,
+    errorMessage: run.errorMessage,
+    startedAt: run.startedAt,
+    completedAt: run.completedAt,
+  };
+}
+
+function recordCollectionRun(input: {
+  tenantId: string;
+  sourceId: string;
+  outcome: CollectionRunOutcome;
+  itemsCollected: number;
+  duplicatesSkipped: number;
+  errorMessage?: string;
+  startedAt: string;
+}): CollectionRun {
+  const run: CollectionRun = {
+    id: createCollectionRunId(),
+    tenantId: input.tenantId,
+    sourceId: input.sourceId,
+    outcome: input.outcome,
+    itemsCollected: input.itemsCollected,
+    duplicatesSkipped: input.duplicatesSkipped,
+    errorMessage: input.errorMessage,
+    startedAt: input.startedAt,
+    completedAt: new Date().toISOString(),
+  };
+
+  collectionRuns.unshift(run);
+
+  return run;
+}
+
+export function listSourceCollectionRuns(
+  tenantSlug: string,
+  sourceId: string,
+  userId: string,
+): CollectionRunView[] | null {
+  const tenant = getTenantBySlug(tenantSlug);
+
+  if (!tenant) {
+    return null;
+  }
+
+  const source = getSourceRecord(sourceId);
+
+  if (!source || source.tenantId !== tenant.id) {
+    return null;
+  }
+
+  const membership = tenantMemberships.find(
+    (entry) => entry.tenantId === tenant.id && entry.userId === userId,
+  );
+
+  if (!membership) {
+    return null;
+  }
+
+  return collectionRuns
+    .filter((run) => run.sourceId === sourceId)
+    .map((run) => collectionRunToView(run, tenant.slug, source.name));
+}
+
+export function getSourceHealth(
+  tenantSlug: string,
+  sourceId: string,
+  userId: string,
+): SourceHealthView | null {
+  const tenant = getTenantBySlug(tenantSlug);
+
+  if (!tenant) {
+    return null;
+  }
+
+  const source = getSourceRecord(sourceId);
+
+  if (!source || source.tenantId !== tenant.id) {
+    return null;
+  }
+
+  const membership = tenantMemberships.find(
+    (entry) => entry.tenantId === tenant.id && entry.userId === userId,
+  );
+
+  if (!membership) {
+    return null;
+  }
+
+  const sourceRuns = collectionRuns.filter(
+    (run) => run.sourceId === sourceId,
+  );
+
+  const status = computeSourceHealthStatus(sourceId);
+
+  const sorted = [...sourceRuns].sort(
+    (a, b) => new Date(b.completedAt).getTime() - new Date(a.completedAt).getTime(),
+  );
+
+  const lastRunAt = sorted.length > 0 ? sorted[0].completedAt : undefined;
+  const lastSuccessAt = sorted.find(
+    (run) => run.outcome === "success",
+  )?.completedAt;
+
+  const recentFailureCount = sourceRuns.filter(
+    (run) => run.outcome === "failure",
+  ).length;
+
+  return {
+    sourceId,
+    tenantSlug: tenant.slug,
+    status,
+    lastRunAt,
+    lastSuccessAt,
+    recentFailureCount,
+    totalRuns: sourceRuns.length,
+  };
+}

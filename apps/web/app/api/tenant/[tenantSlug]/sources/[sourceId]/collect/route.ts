@@ -4,8 +4,6 @@ import { getSessionFromRequest } from "@/lib/request-auth";
 import {
   collectTenantRssSource,
   getTenantSource,
-  parseRssFeedItemInput,
-  type RssFeedItemInput,
 } from "@/lib/tenant-home";
 
 type TenantSourceCollectRouteContext = {
@@ -39,26 +37,6 @@ async function readCollectInput(request: NextRequest): Promise<CollectPayload> {
   }
 
   return { items };
-}
-
-function parseItems(input: unknown): RssFeedItemInput[] {
-  if (!Array.isArray(input)) {
-    throw new Error("items_required");
-  }
-
-  const items: RssFeedItemInput[] = [];
-
-  for (const entry of input) {
-    const parsed = parseRssFeedItemInput(entry);
-
-    if (!parsed) {
-      throw new Error("feed_item_required");
-    }
-
-    items.push(parsed);
-  }
-
-  return items;
 }
 
 function toErrorResponse(error: unknown) {
@@ -103,12 +81,11 @@ export async function POST(
 
   try {
     const input = await readCollectInput(request);
-    const items = parseItems(input.items);
     const result = collectTenantRssSource({
       tenantSlug,
       sourceId,
       collectedByUserId: session.userId,
-      items,
+      items: input.items,
     });
 
     return NextResponse.json(
@@ -116,6 +93,7 @@ export async function POST(
         created: result.created.length,
         duplicates: result.duplicateCount,
         observations: result.observations,
+        run: result.run,
       },
       { status: 201 },
     );
@@ -123,3 +101,4 @@ export async function POST(
     return toErrorResponse(error);
   }
 }
+
